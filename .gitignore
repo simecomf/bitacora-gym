@@ -1,0 +1,5 @@
+# Datos personales: nunca al repositorio
+bitacora-datos*.json
+# Artifact original de Claude (la app publicada es index.html)
+bitacora-gym.html
+.claude/
