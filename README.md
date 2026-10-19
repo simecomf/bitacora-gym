@@ -8,3 +8,4 @@ desde **Rutinas › Respaldo** al menos una vez por semana.
 - `localdb.js` — capa de datos local con la interfaz `doc()/collection()` que usa la app
 - `sw.js` — service worker (app + librería XLSX sin internet). Sube `VERSION` al cambiar archivos.
 - `manifest.webmanifest`, `icons/` — instalación en el teléfono
+- `exercises-db.json` — índice del banco de imágenes [free-exercise-db](https://github.com/yuhonas/free-exercise-db) (Unlicense, dominio público); las imágenes se cargan desde jsDelivr fijadas a un commit

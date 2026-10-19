@@ -1,10 +1,10 @@
 /* Service worker: guarda la app y la librería XLSX para usarla sin internet.
    Sube VERSION cuando cambies algún archivo para que los teléfonos se actualicen. */
-const VERSION = 'v2';
+const VERSION = 'v3';
 const APP = 'bitacora-app-' + VERSION;
 const RUNTIME = 'bitacora-runtime';
 const XLSX = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-const FILES = ['./', 'index.html', 'localdb.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
+const FILES = ['./', 'index.html', 'localdb.js', 'exercises-db.json', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil((async () => {
@@ -38,8 +38,8 @@ self.addEventListener('fetch', e => {
     })());
     return;
   }
-  // XLSX library and Google Fonts: cache first
-  if (req.url === XLSX || url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
+  // XLSX library, exercise images and Google Fonts: cache first
+  if (req.url === XLSX || url.pathname.startsWith('/gh/yuhonas/free-exercise-db@') || url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
     e.respondWith((async () => {
       const hit = await caches.match(req);
       if (hit) return hit;
