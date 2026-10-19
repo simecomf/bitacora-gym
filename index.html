@@ -282,6 +282,8 @@ const clone = o => JSON.parse(JSON.stringify(o));
 const DEF_SETTINGS = { unit: 'kg', rest: 90 };
 const PLATE = { red:'var(--p-red)', blue:'var(--p-blue)', yellow:'var(--p-yellow)', green:'var(--p-green)', grey:'var(--p-grey)' };
 const plate = c => PLATE[c] || 'var(--p-grey)';
+const COLOR_NAME = { red: 'Rojo', blue: 'Azul', yellow: 'Amarillo', green: 'Verde', grey: 'Gris' };
+const NEW_DAY = '__new';
 const DOW = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
 
 const S = {
@@ -640,12 +642,67 @@ function backupNote() {
   const msg = ago === null ? 'Aún no has exportado un respaldo.' : `Han pasado <b>${ago} días</b> desde tu último respaldo.`;
   return `<div class="banner spread" style="border-color:var(--gold);background:var(--gold-bg)"><span>${msg} Tus datos solo viven en este dispositivo.</span><button class="btn sm primary" data-act="exportjson">Exportar</button></div>`;
 }
+/* starter programs: [name, description, days: [name, dow, color, focus, exercises: [name, group, group2, sets, repMin, repMax, equip]]] */
+const TEMPLATES = [
+  ['Cuerpo completo', '3 días · ideal para empezar', [
+    ['Cuerpo completo A', 1, 'red', 'Sentadilla y empuje horizontal', [['Sentadilla', 'Cuádriceps', 'Glúteos', 3, 6, 10, 'barra'], ['Press de banca', 'Pecho', 'Tríceps', 3, 6, 10, 'barra'], ['Remo con barra', 'Espalda', 'Bíceps', 3, 8, 12, 'barra'], ['Press militar con mancuernas', 'Hombros', 'Tríceps', 2, 8, 12, 'mancuerna'], ['Crunch abdominal', 'Core', '', 2, 12, 15, 'corporal']]],
+    ['Cuerpo completo B', 3, 'blue', 'Bisagra de cadera y tirón vertical', [['Peso muerto rumano', 'Femorales', 'Glúteos', 3, 8, 10, 'barra'], ['Jalón al pecho', 'Espalda', 'Bíceps', 3, 8, 12, 'polea'], ['Press inclinado con mancuernas', 'Pecho', 'Hombros', 3, 8, 12, 'mancuerna'], ['Zancadas', 'Cuádriceps', 'Glúteos', 2, 10, 12, 'mancuerna'], ['Curl de bíceps', 'Bíceps', '', 2, 10, 15, 'mancuerna']]],
+    ['Cuerpo completo C', 5, 'yellow', 'Prensa y empuje vertical', [['Prensa', 'Cuádriceps', 'Glúteos', 3, 10, 12, 'maquina'], ['Press militar', 'Hombros', 'Tríceps', 3, 6, 10, 'barra'], ['Remo en polea baja', 'Espalda', 'Bíceps', 3, 10, 12, 'polea'], ['Curl femoral', 'Femorales', '', 2, 10, 15, 'maquina'], ['Extensión de tríceps en polea', 'Tríceps', '', 2, 10, 15, 'polea']]]]],
+  ['Torso / Pierna', '4 días · intermedio', [
+    ['Torso A', 1, 'blue', 'Fuerza: empuje y tirón con barra', [['Press de banca', 'Pecho', 'Tríceps', 4, 5, 8, 'barra'], ['Remo con barra', 'Espalda', 'Bíceps', 4, 6, 10, 'barra'], ['Press militar con mancuernas', 'Hombros', 'Tríceps', 3, 8, 12, 'mancuerna'], ['Jalón al pecho', 'Espalda', 'Bíceps', 3, 8, 12, 'polea'], ['Curl de bíceps', 'Bíceps', '', 2, 10, 15, 'mancuerna']]],
+    ['Pierna A', 2, 'red', 'Énfasis en cuádriceps', [['Sentadilla', 'Cuádriceps', 'Glúteos', 4, 5, 8, 'barra'], ['Prensa', 'Cuádriceps', 'Glúteos', 3, 10, 12, 'maquina'], ['Curl femoral', 'Femorales', '', 3, 10, 15, 'maquina'], ['Elevación de pantorrillas', 'Pantorrillas', '', 3, 10, 15, 'maquina'], ['Crunch abdominal', 'Core', '', 2, 12, 15, 'corporal']]],
+    ['Torso B', 4, 'yellow', 'Volumen: inclinado y dominadas', [['Press inclinado con mancuernas', 'Pecho', 'Hombros', 3, 8, 12, 'mancuerna'], ['Dominadas', 'Espalda', 'Bíceps', 3, 6, 10, 'corporal'], ['Remo en polea baja', 'Espalda', 'Bíceps', 3, 10, 12, 'polea'], ['Elevaciones laterales', 'Hombros', '', 3, 12, 15, 'mancuerna'], ['Extensión de tríceps en polea', 'Tríceps', '', 2, 10, 15, 'polea']]],
+    ['Pierna B', 5, 'green', 'Énfasis en femorales y glúteos', [['Peso muerto rumano', 'Femorales', 'Glúteos', 4, 6, 10, 'barra'], ['Hip thrust', 'Glúteos', 'Femorales', 3, 8, 12, 'barra'], ['Zancadas', 'Cuádriceps', 'Glúteos', 3, 10, 12, 'mancuerna'], ['Extensión de cuádriceps', 'Cuádriceps', '', 2, 12, 15, 'maquina'], ['Elevación de pantorrillas', 'Pantorrillas', '', 3, 10, 15, 'maquina']]]]],
+  ['Empuje / Tirón / Pierna', '3 días · por grupos musculares', [
+    ['Empuje', 1, 'red', 'Pecho, hombros y tríceps', [['Press de banca', 'Pecho', 'Tríceps', 4, 6, 10, 'barra'], ['Press militar', 'Hombros', 'Tríceps', 3, 6, 10, 'barra'], ['Press inclinado con mancuernas', 'Pecho', 'Hombros', 3, 8, 12, 'mancuerna'], ['Elevaciones laterales', 'Hombros', '', 3, 12, 15, 'mancuerna'], ['Extensión de tríceps en polea', 'Tríceps', '', 3, 10, 15, 'polea']]],
+    ['Tirón', 3, 'blue', 'Espalda y bíceps', [['Dominadas', 'Espalda', 'Bíceps', 3, 6, 10, 'corporal'], ['Remo con barra', 'Espalda', 'Bíceps', 4, 6, 10, 'barra'], ['Jalón al pecho', 'Espalda', 'Bíceps', 3, 8, 12, 'polea'], ['Face pull', 'Hombros', 'Espalda', 3, 12, 15, 'polea'], ['Curl de bíceps', 'Bíceps', '', 3, 10, 15, 'mancuerna']]],
+    ['Pierna', 5, 'yellow', 'Cuádriceps, femorales y glúteos', [['Sentadilla', 'Cuádriceps', 'Glúteos', 4, 5, 8, 'barra'], ['Peso muerto rumano', 'Femorales', 'Glúteos', 3, 8, 10, 'barra'], ['Prensa', 'Cuádriceps', 'Glúteos', 3, 10, 12, 'maquina'], ['Curl femoral', 'Femorales', '', 3, 10, 15, 'maquina'], ['Elevación de pantorrillas', 'Pantorrillas', '', 3, 10, 15, 'maquina']]]]]
+];
+function templateRoutine(t) {
+  return { days: t[2].map(([name, dow, color, focus, exs]) => ({ id: slug(name), name, dow, color, focus, kind: 'pesas',
+    exercises: exs.map(([n, g, g2, sets, repMin, repMax, equip]) => { const e = { id: slug(n), name: n, group: g, sets, repMin, repMax, equip, unit: U() }; if (g2) e.group2 = g2; return e; }) })) };
+}
+function templateList() {
+  return TEMPLATES.map((t, i) => `<button type="button" class="pick" data-act="tpl" data-i="${i}"><b>${esc(t[0])}</b><small>${esc(t[1])} · ${t[2].map(d => esc(d[0]) + ' (' + DOW[d[1]] + ')').join(', ')}</small></button>`).join('');
+}
+function openTemplates() {
+  modal(`<div><span class="eyebrow">Plantillas</span><h2>Elige un programa</h2></div>
+    <div class="pick-list">${templateList()}</div>
+    <p class="small muted" style="margin:0">Reemplaza los días de tu rutina actual. Tu historial y récords se conservan. Después puedes cambiar ejercicios, series, días y colores en Editar.</p>
+    <div class="row"><button type="button" class="btn ghost" id="tplX">Cancelar</button></div>`);
+  $('#tplX').onclick = closeModal;
+}
+async function useTemplate(i) {
+  const t = TEMPLATES[i]; if (!t) return;
+  if (days().length && !(await confirmBox({ title: 'Usar ' + t[0], body: 'Tus días actuales se reemplazarán por esta plantilla. El historial y los récords se conservan.' }, 'Reemplazar'))) return;
+  const nr = { ...(S.routines || {}), ...templateRoutine(t) };
+  keepOrphans(nr);
+  if (!(await write('config/routines', nr))) return;
+  if (S.dbEmpty) { S.settings.weekGoal = t[2].length; await write('config/settings', { ...S.settings }); }
+  S.routines = nr; S.dbEmpty = false; closeModal(); S.tab = 'rut'; S.editDay = null; render(); window.scrollTo(0, 0);
+  toast('Rutina lista. Ajústala con “Editar” si quieres.');
+}
+async function startFromScratch() {
+  if (!(await write('config/routines', { days: [] }))) return;
+  await write('config/settings', { ...S.settings });
+  S.routines = { days: [] }; S.dbEmpty = false; S.tab = 'rut'; newDay();
+}
+const sortDays = nr => nr.days.sort((a, b) => (a.dow === null || a.dow === undefined ? 9 : (a.dow + 6) % 7) - (b.dow === null || b.dow === undefined ? 9 : (b.dow + 6) % 7));
+function newDay() {
+  const used = new Set(days().map(d => d.color)); const free = [1, 2, 3, 4, 5, 6, 0].find(n => !days().some(d => d.dow === n));
+  S.editDay = NEW_DAY;
+  S.editDraft = { id: '', name: '', focus: '', kind: 'pesas', dow: free === undefined ? null : free, color: Object.keys(PLATE).find(c => !used.has(c)) || 'grey', exercises: [{ id: '', name: '', unit: U(), group: '', sets: 3, repMin: 8, repMax: 12 }] };
+  render(); window.scrollTo(0, 0);
+}
 function viewWelcome() {
-  return emptyBlock('Bienvenido a tu bitácora', 'Tus datos se guardan solo en este dispositivo. Si tienes un respaldo (bitacora-datos.json), impórtalo para recuperar tus rutinas y sesiones.')
-    + `<button class="btn primary block" data-act="importjson">Importar respaldo (JSON)</button>`;
+  return emptyBlock('Bienvenido a tu bitácora', 'Elige cómo empezar. Tus datos se guardan solo en este dispositivo.')
+    + `<div class="card"><h2>Empieza con una plantilla</h2><p class="small muted" style="margin:0">Un programa listo que luego puedes ajustar: ejercicios, series, repeticiones y días.</p><div class="stack" style="gap:6px">${templateList()}</div></div>
+    <div class="card"><h2>Arma tu propia rutina</h2><p class="small muted" style="margin:0">Crea tus días de entrenamiento uno por uno con tus ejercicios.</p><button class="btn primary block" data-act="scratch">Crear mi rutina</button></div>
+    <div class="card"><h2>¿Ya usabas la bitácora?</h2><p class="small muted" style="margin:0">Importa tu respaldo (bitacora-datos.json) para recuperar tus rutinas y sesiones.</p><button class="btn block" data-act="importjson">Importar respaldo (JSON)</button></div>`;
 }
 function viewHoy() {
-  if (!days().length) return emptyBlock('Tu programa aún no está cargado', 'Agrega tus días de entrenamiento en la pestaña Rutinas para empezar a registrar.');
+  if (!days().length) return backupNote() + emptyBlock('Aún no tienes días de entrenamiento', 'Arma tu rutina o parte de una plantilla para empezar a registrar.')
+    + `<div class="grid2"><button class="btn primary" data-act="newday">+ Agregar día</button><button class="btn" data-act="templates">Usar una plantilla</button></div>`;
   const dow = new Date().getDay();
   const todayDay = days().find(d => d.dow === dow);
   const doneToday = doneSessions().filter(s => s.date === today());
@@ -1238,7 +1295,8 @@ function viewRut() {
     <button class="btn block" data-act="importjson">Importar respaldo</button>
     <p class="small muted" style="margin:0">El Excel trae cada serie con su peso, repeticiones, tipo y RPE, el resumen de cada sesión, tus récords, tu rutina y tus medidas corporales. Sirve para revisar, no para importar.</p>${st.lastExport ? `<p class="small" style="margin:0">Último Excel: <b>${fmtDate(st.lastExport, { weekday: 'long', day: 'numeric', month: 'long' })}</b></p>` : ''}${exportBtn('block')}
     <p class="small muted" style="margin:0">${S.persisted ? 'Almacenamiento persistente activado: el navegador no borrará tus datos por falta de espacio.' : 'El navegador no confirmó el almacenamiento persistente. Instala la app en tu pantalla de inicio y exporta respaldos seguido.'}</p></div>`;
-  return `<h1>Rutinas</h1>${days().length ? cards : emptyBlock('Sin rutinas', 'Tu programa semanal aparecerá aquí.')}${settings}`;
+  const add = `<div class="grid2"><button class="btn" data-act="newday">+ Agregar día</button><button class="btn" data-act="templates">Usar una plantilla</button></div>`;
+  return `<h1>Rutinas</h1>${days().length ? cards : emptyBlock('Sin rutinas', 'Arma tu semana: agrega tus días de entrenamiento o parte de una plantilla y ajústala.')}${add}${settings}`;
 }
 function viewEditor() {
   const d = S.editDraft;
@@ -1253,13 +1311,21 @@ function viewEditor() {
     <div class="ed-row2"><label class="field">Músculo principal<select id="ed-g-${i}" data-ed="group">${muscleOpts(e.group, false)}</select></label><label class="field">Secundario<select id="ed-g2-${i}" data-ed="group2">${muscleOpts(e.group2, true)}</select></label></div>
     <div class="ed-row2"><label class="field">Equipo<select id="ed-e-${i}" data-ed="equip"><option value="" ${!e.equip ? 'selected' : ''}>Sin definir</option>${EQUIP.map(([k, l]) => `<option value="${k}" ${e.equip === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label><label class="field">Descanso<select id="ed-r-${i}" data-ed="rest"><option value="" ${!num(e.rest) ? 'selected' : ''}>General (${clock((num(S.settings.rest) || 90) * 1000)})</option>${RESTS.map(x => `<option value="${x}" ${num(e.rest) === x ? 'selected' : ''}>${clock(x * 1000)}</option>`).join('')}</select></label></div>
   </div>`).join('');
+  const isNew = S.editDay === NEW_DAY;
+  const taken = n => days().find(x => x.id !== d.id && x.dow === n);
+  const dowChips = [1, 2, 3, 4, 5, 6, 0].map(n => `<button type="button" class="chip" data-act="eddow" data-n="${n}" aria-pressed="${d.dow === n}" ${taken(n) ? `title="También: ${esc(taken(n).name)}"` : ''}>${DOW[n]}${taken(n) ? ' ·' : ''}</button>`).join('')
+    + `<button type="button" class="chip" data-act="eddow" data-n="" aria-pressed="${d.dow === null || d.dow === undefined}">Sin día fijo</button>`;
+  const colorChips = Object.keys(PLATE).map(c => `<button type="button" class="chip" data-act="edcolor" data-c="${c}" aria-pressed="${d.color === c}" style="--plate:${PLATE[c]}" aria-label="${COLOR_NAME[c]}"><span class="dot"></span>${COLOR_NAME[c]}</button>`).join('');
   return `<div class="card day-card" style="--plate:${plate(d.color)}">
-    <span class="tag"><span class="dot"></span>Editando · ${DOW[d.dow] || ''}</span>
-    <label class="field">Nombre<input id="ed-name" data-edd="name" value="${esc(d.name)}"></label>
-    <label class="field">Enfoque<input id="ed-focus" data-edd="focus" value="${esc(d.focus || '')}"></label>
-    ${d.kind === 'cardio' ? '' : `<div>${items}</div><button class="btn sm" data-act="addex">+ Agregar ejercicio</button>
+    <span class="tag"><span class="dot"></span>${isNew ? 'Nuevo día' : 'Editando · ' + (DOW[d.dow] || 'sin día fijo')}</span>
+    <label class="field">Nombre<input id="ed-name" data-edd="name" value="${esc(d.name)}" placeholder="Ej.: Pierna, Torso A, Empuje"></label>
+    <label class="field">Enfoque<input id="ed-focus" data-edd="focus" value="${esc(d.focus || '')}" placeholder="${d.kind === 'cardio' ? 'Ej.: 30 min en caminadora a ritmo cómodo' : 'Ej.: Énfasis en cuádriceps'}"></label>
+    <div class="stack" style="gap:6px"><span class="small muted">Tipo</span><div class="seg" role="group" aria-label="Tipo de día">${[['pesas', 'Pesas'], ['cardio', 'Cardio']].map(([k, l]) => `<button type="button" data-act="edkind" data-k="${k}" aria-pressed="${(d.kind || 'pesas') === k}">${l}</button>`).join('')}</div></div>
+    <div class="stack" style="gap:6px"><span class="small muted">Día de la semana</span><div class="chips" style="flex-wrap:wrap">${dowChips}</div><span class="small muted">El día que elijas aparece en Hoy como “Hoy toca”. Cualquier día puedes empezarlo igual desde “Otra sesión”.</span></div>
+    <div class="stack" style="gap:6px"><span class="small muted">Color</span><div class="chips" style="flex-wrap:wrap">${colorChips}</div></div>
+    ${d.kind === 'cardio' ? '' : `<span class="eyebrow">Ejercicios</span><div>${items}</div><button class="btn sm" data-act="addex">+ Agregar ejercicio</button>
     <p class="small muted" style="margin:0">Cambiar el nombre de un ejercicio conserva su historial. En “Equipo” pon con qué lo has hecho hasta ahora; si luego lo cambias (por ejemplo de barra a mancuernas), la app lo trata como una variante con su propio historial y récords.</p>`}
-    <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="edcancel">Cancelar</button><button class="btn primary" data-act="edsave">Guardar cambios</button></div></div>`;
+    <div class="row" style="justify-content:flex-end">${isNew ? '' : '<button class="btn ghost danger" data-act="eddel" style="margin-right:auto">Eliminar día</button>'}<button class="btn ghost" data-act="edcancel">Cancelar</button><button class="btn primary" data-act="edsave">${isNew ? 'Crear día' : 'Guardar cambios'}</button></div></div>`;
 }
 function muscleOpts(cur, optional) {
   const list = MUSCLES.slice(); if (cur && !list.includes(cur)) list.push(cur);
@@ -1452,14 +1518,38 @@ $('#view').addEventListener('click', async e => {
   else if (act === 'mv') { const i = +b.dataset.i, j = i + +b.dataset.d, x = S.editDraft.exercises; if (j >= 0 && j < x.length) { [x[i], x[j]] = [x[j], x[i]]; render(); } }
   else if (act === 'rmex') { S.editDraft.exercises.splice(+b.dataset.i, 1); render(); }
   else if (act === 'addex') { S.editDraft.exercises.push({ id: '', name: '', unit: U(), group: '', sets: 3, repMin: 8, repMax: 12 }); render(); const i = S.editDraft.exercises.length - 1; const el = $('#ed-n-' + i); el && el.focus(); }
-  else if (act === 'edsave') {
+  else if (act === 'newday') newDay();
+  else if (act === 'templates') openTemplates();
+  else if (act === 'tpl') useTemplate(+b.dataset.i);
+  else if (act === 'scratch') startFromScratch();
+  else if (act === 'eddow') { S.editDraft.dow = b.dataset.n === '' ? null : +b.dataset.n; render(); }
+  else if (act === 'edcolor') { S.editDraft.color = b.dataset.c; render(); }
+  else if (act === 'edkind') { S.editDraft.kind = b.dataset.k; if (b.dataset.k === 'pesas' && !(S.editDraft.exercises || []).length) S.editDraft.exercises = [{ id: '', name: '', unit: U(), group: '', sets: 3, repMin: 8, repMax: 12 }]; render(); }
+  else if (act === 'eddel') {
     const d = S.editDraft;
+    const ok = await confirmBox({ title: 'Eliminar ' + (d.name || 'día'), body: 'El día sale de tu rutina. Las sesiones que ya registraste, tu progreso y tus récords se conservan.' }, 'Eliminar', true);
+    if (!ok) return;
+    const nr = clone(S.routines); nr.days = nr.days.filter(x => x.id !== d.id); keepOrphans(nr);
+    if (await write('config/routines', nr)) { S.routines = nr; S.editDay = null; S.editDraft = null; render(); toast('Día eliminado'); }
+  }
+  else if (act === 'edsave') {
+    const d = S.editDraft; const isNew = S.editDay === NEW_DAY;
+    d.name = (d.name || '').trim();
+    if (!d.name) { toast('Ponle un nombre al día.'); $('#ed-name').focus(); return; }
+    if (d.kind === 'cardio') delete d.exercises;
+    else if (!(d.exercises || []).some(x => x.name.trim())) { toast('Agrega al menos un ejercicio.'); return; }
+    if (isNew) { const ids = new Set(days().map(x => x.id)); const id0 = slug(d.name); let id = id0, n = 2; while (ids.has(id)) id = id0 + '-' + n++; d.id = id; }
+    if (d.kind === 'cardio') {
+      const nr = clone(S.routines || { days: [] }); nr.days = isNew ? nr.days.concat([d]) : nr.days.map(x => x.id === d.id ? d : x); sortDays(nr); keepOrphans(nr);
+      if (await write('config/routines', nr)) { S.routines = nr; S.editDay = null; S.editDraft = null; render(); toast(isNew ? 'Día creado' : 'Rutina guardada'); }
+      return;
+    }
     d.exercises = (d.exercises || []).filter(x => x.name.trim()).map(x => {
       const sets = Math.max(1, Math.round(num(x.sets) || 1)); let a = Math.max(1, Math.round(num(x.repMin) || 1)); let z = Math.max(a, Math.round(num(x.repMax) || a));
       let id = x.id; if (!id) { const ids = new Set(allExercises().map(e => e.id)); const found = allExercises().find(e => e.name.trim().toLowerCase() === x.name.trim().toLowerCase()); id = found ? found.id : slug(x.name); if (!found) { let k = id, n = 2; while (ids.has(k)) k = id + '-' + n++; id = k; } }
       return { ...x, id, name: x.name.trim(), unit: x.unit || U(), sets, repMin: a, repMax: z };
     });
-    const nr = clone(S.routines);
+    const nr = clone(S.routines || { days: [] });
     // equipment and rest
     d.exercises = d.exercises.map(x => {
       const y = { ...x }; const r = num(y.rest); if (r) y.rest = r; else delete y.rest; const eq = y.equip || ''; if (!eq) delete y.equip;
@@ -1470,17 +1560,18 @@ $('#view').addEventListener('click', async e => {
       const out = { ...y, id: vid, name: t.name || y.name }; if (t.equip) out.equip = t.equip; else delete out.equip; if (t.base) out.base = t.base; else delete out.base;
       return out;
     });
-    nr.days = nr.days.map(x => x.id === d.id ? d : x);
-    keepOrphans(nr);
+    nr.days = isNew ? nr.days.concat([d]) : nr.days.map(x => x.id === d.id ? d : x);
+    sortDays(nr); keepOrphans(nr);
     // keep muscle mapping consistent for the same exercise used on other days and its variants
     for (const e of d.exercises) {
       const sync = x => { x.group = e.group || ''; if (e.group2) x.group2 = e.group2; else delete x.group2; };
       for (const o of nr.days) if (o.id !== d.id) for (const x of (o.exercises || [])) if (x.id === e.id) sync(x);
       for (const x of (nr.extra || [])) if (x.id === e.id || x.base === (e.base || e.id) || x.id === e.base) sync(x);
     }
-    if (await write('config/routines', nr)) { S.routines = nr; S.editDay = null; S.editDraft = null; render(); toast('Rutina guardada'); }
+    if (await write('config/routines', nr)) { S.routines = nr; S.editDay = null; S.editDraft = null; render(); toast(isNew ? 'Día creado' : 'Rutina guardada'); }
   }
 });
+$('#modalIn').addEventListener('click', e => { const b = e.target.closest('[data-act="tpl"]'); if (b) useTemplate(+b.dataset.i); });
 $('#view').addEventListener('input', e => {
   const t = e.target;
   if (t.dataset.f && S.active) { const r = t.closest('.set'); const s = S.active.entries[+r.dataset.ei].sets[+r.dataset.si]; s[t.dataset.f] = num(t.value); queueSave(); }
