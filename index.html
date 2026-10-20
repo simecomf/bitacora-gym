@@ -268,6 +268,17 @@ details.pk summary,details.howto summary{cursor:pointer;font-weight:600;color:va
 .ref-imgs figcaption{font-size:12px;color:var(--muted);text-align:center}
 .pick.has-img{flex-direction:row;align-items:center;gap:10px}
 .pick.has-img img{width:52px;height:52px;object-fit:cover;border-radius:8px;flex:none;background:#fff}
+.cat-item{display:grid;gap:6px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.cat-item:last-child{border-bottom:0}
+.cat-item a{color:var(--p-blue);font-weight:600}
+.cat-vars{display:flex;gap:6px;flex-wrap:wrap}
+.coach{display:grid;gap:4px;font-size:14px;padding:8px 10px;border-radius:8px;background:var(--surface-2)}
+.coach b{font-family:var(--f-display);font-size:16px}
+.coach.up{background:var(--gold-bg);color:var(--gold)}
+.coach.down,.coach.stall{background:var(--surface-2);border-left:3px solid var(--p-blue)}
+.coach.deload{border-left:3px solid var(--p-green)}
+.coach small{color:var(--muted)}
+.ed-thumb{width:40px;height:40px;border-radius:6px;object-fit:cover;background:#fff;border:1px solid var(--line);flex:none}
 </style>
 
 <header class="top"><div class="top-in">
@@ -290,6 +301,7 @@ details.pk summary,details.howto summary{cursor:pointer;font-weight:600;color:va
 <input type="file" id="photoFile" accept="image/*" hidden>
 
 <script src="localdb.js"></script>
+<script src="catalog.js"></script>
 <script>
 (() => {
 const $ = (s, r = document) => r.querySelector(s);
@@ -391,15 +403,67 @@ function bests(hist) {
   return b;
 }
 function lastFor(exId, excludeId) { const h = history(exId, excludeId); return h.length ? h[h.length - 1] : null; }
-function suggestion(ex, last, u) {
-  if (!last || !ex) return null;
-  const sets = last.sets.filter(s => num(s.r) > 0 && s.t !== 'd');
-  if (sets.length < (ex.sets || 1)) return null;
-  if (!sets.every(s => num(s.r) >= ex.repMax)) return null;
-  if (last.maxW <= 0) return { txt: 'Llegaste al tope de reps: suma dificultad' };
-  const step = u === 'lb' ? 5 : 2.5;
-  const nxt = Math.round((fromKg(last.maxW, u) + step) * 2) / 2;
-  return { txt: 'Sube a ' + fmtN(nxt) + ' ' + u + ': hiciste ' + ex.repMax + '+ en todas' };
+/* ---------- ENTRENADOR ----------
+   Double progression adjusted by RPE (Helms 2018): reach the top of the rep range in every working set
+   → more weight; very easy sets (RPE ≤ 7) → more weight; two sessions below the range → a bit less weight.
+   Stalls: best estimated 1RM not beaten in ≥ 3 sessions over ≥ 3 weeks. Deload per Bell 2023. */
+const loadStep = (exId, u) => { const eq = (exInfo(exId) || {}).equip; return u === 'lb' ? 5 : eq === 'mancuerna' ? 2 : 2.5; };
+const roundTo = (v, st) => Math.round(v / st) * st;
+const deloadOn = () => !!S.settings.deloadUntil && today() <= S.settings.deloadUntil;
+function coach(exId, tgt, u, excludeId) {
+  const h = history(exId, excludeId); const last = h[h.length - 1]; if (!last || !tgt) return null;
+  const sets = last.sets.filter(s => num(s.r) > 0 && s.t !== 'd'); if (!sets.length) return null;
+  const reps = sets.map(s => num(s.r)); const rpes = sets.map(s => num(s.rpe)).filter(x => x);
+  const rpe = rpes.length ? rpes.reduce((a, b) => a + b, 0) / rpes.length : null;
+  const repMin = tgt.repMin || 1, repMax = tgt.repMax || repMin;
+  if (last.maxW <= 0) {   // bodyweight: progress by reps
+    const r = Math.min(repMax, Math.min(...reps) + 1);
+    return { w: null, reps: r, kind: reps.every(x => x >= repMax) ? 'up' : 'keep', txt: reps.every(x => x >= repMax) ? 'Llegaste al tope: añade peso o pasa a una variante más difícil' : 'Busca ' + r + ' repeticiones en cada serie' };
+  }
+  const lastW = fromKg(last.maxW, u); const st = loadStep(exId, u);
+  if (deloadOn()) return { w: roundTo(lastW * 0.9, st), reps: repMin, kind: 'deload', txt: 'Semana de descarga: ~90 % del peso, la mitad de series y 3 o más repeticiones en reserva' };
+  const allTop = reps.every(x => x >= repMax);
+  if (allTop && (rpe === null || rpe <= 9)) return { w: roundTo(lastW + st, st), reps: repMin, kind: 'up', txt: `Sube a ${fmtN(roundTo(lastW + st, st))} ${u}: hiciste ${repMax}+ en todas las series` };
+  if (rpe !== null && rpe <= 7 && Math.min(...reps) >= repMin) return { w: roundTo(lastW + st, st), reps: Math.max(repMin, Math.min(...reps) - 1), kind: 'up', txt: `Sube a ${fmtN(roundTo(lastW + st, st))} ${u}: la última vez te sobraban repeticiones (RPE ${fmtN(rpe)})` };
+  const prev = h[h.length - 2];
+  // below the range = the first working set or the session average under repMin (a last set dropping is normal fatigue)
+  const below = x => { if (!x) return false; const rr = x.sets.filter(s => num(s.r) > 0 && s.t !== 'd').map(s => num(s.r)); return rr.length && (rr[0] < repMin || rr.reduce((a, b) => a + b, 0) / rr.length < repMin); };
+  if (below(last) && below(prev) && fromKg(prev.maxW, u) >= lastW - 0.01) { const w = Math.max(st, Math.min(roundTo(lastW * 0.95, st), roundTo(lastW - st, st))); return { w, reps: repMin, kind: 'down', txt: `Baja a ${fmtN(w)} ${u} y reconstruye: 2 sesiones por debajo de ${repMin} repeticiones` }; }
+  const r = Math.min(repMax, Math.max(repMin, Math.min(...reps) + 1));
+  return { w: Math.round(lastW * 10) / 10, reps: r, kind: 'keep', txt: `Mantén ${fmtN(lastW)} ${u} y busca ${r} repeticiones` + (rpe !== null && rpe >= 9.5 ? ' (la última fue muy dura: no fuerces el fallo)' : '') };
+}
+function stallOf(exId) {
+  const h = history(exId); if (h.length < 4) return null;
+  let bi = 0; h.forEach((x, i) => { if (x.e1rm >= h[bi].e1rm) bi = i; });
+  const since = h.length - 1 - bi; const weeks = (Date.now() - h[bi].at) / (7 * 864e5);
+  if (since < 3 || weeks < 3 || h[h.length - 1].bodyweight) return null;
+  return { since, weeks: Math.floor(weeks), best: h[bi] };
+}
+function stallTip(exId) {
+  const ci = catInfo(exId); const alt = ci && ci.item[5].length > 1 ? ci.item[5].map(v => v[0]).find(eq => eq !== ((exInfo(exId) || {}).equip)) : null;
+  return 'Prueba bajar 10 % el peso y subir repeticiones 2 semanas' + (alt ? `, o cambia a la variante con ${eqLabel(alt).toLowerCase()}` : ', o cámbialo por otro ejercicio del mismo músculo') + '.';
+}
+/* deload: ≥ 5 straight weeks meeting the weekly goal plus signs of fatigue (≥ 3 stalled exercises or average RPE ≥ 9) */
+function deloadAdvice() {
+  if (deloadOn()) return null;
+  const last = S.settings.lastDeload; if (last && (dateOf(today()) - dateOf(last)) / 864e5 < 42) return null;
+  const goal = weekGoal(); let w = addDays(mondayOf(new Date()), -7), run = 0;
+  while (sessionsIn(w, addDays(w, 7)).length >= goal) { run++; w = addDays(w, -7); }
+  if (run < 5) return null;
+  const stalled = allExercises().filter(e => stallOf(e.id)); const recent = sessionsIn(addDays(new Date(), -14), addDays(new Date(), 1));
+  const rp = recent.flatMap(s => (s.entries || []).flatMap(en => workSets(en).map(x => num(x.rpe)).filter(Boolean)));
+  const rpe = rp.length >= 6 ? rp.reduce((a, b) => a + b, 0) / rp.length : null;
+  if (stalled.length < 3 && !(rpe !== null && rpe >= 9)) return null;
+  return { run, stalled: stalled.length, rpe };
+}
+function coachCard() {
+  if (deloadOn()) return `<div class="card"><div class="spread"><span class="eyebrow">Entrenador</span><button class="btn sm ghost" data-act="deloadoff">Terminar descarga</button></div><div class="coach deload"><b>Semana de descarga hasta el ${fmtDate(S.settings.deloadUntil, { weekday: 'long', day: 'numeric' })}</b><span>Usa ~90 % del peso, la mitad de las series y deja 3 o más repeticiones en reserva. Ya viene así en tus sesiones.</span></div></div>`;
+  const d = deloadAdvice();
+  const st = allExercises().map(e => [e, stallOf(e.id)]).filter(x => x[1]).slice(0, 3);
+  if (!d && !st.length) return '';
+  return `<div class="card"><span class="eyebrow">Entrenador</span>
+    ${d ? `<div class="coach deload"><b>Te toca una semana de descarga</b><span>Llevas ${d.run} semanas seguidas cumpliendo tu meta${d.stalled >= 3 ? ` y ${d.stalled} ejercicios estancados` : ''}${d.rpe ? `; RPE promedio ${fmtN(d.rpe)}` : ''}. Bajar la carga una semana reduce la fatiga y te deja seguir progresando. ${refLink('bell2023')}</span><button class="btn sm primary" data-act="deloadon" style="justify-self:start">Empezar descarga (7 días)</button></div>` : ''}
+    ${st.map(([e, s]) => `<div class="coach stall"><b>${esc(e.name)}: estancado</b><span>Tu mejor marca (${W(s.best.e1rm, exUnit(e.id))} ${exUnit(e.id)} de 1RM est.) es de hace ${s.weeks} semanas y ${s.since} sesiones. ${esc(stallTip(e.id))}</span></div>`).join('')}</div>`;
 }
 const setStr = (s, from, to, full) => { const w = num(s.w) || 0; return (w ? fmtN(fromKg(toKg(w, from), to || from)) + '×' : '') + num(s.r) + (full && s.t && STYPE_LBL[s.t] && s.t !== 'w' ? ' ' + STYPE_LBL[s.t] : '') + (full && num(s.rpe) ? ' @' + fmtN(num(s.rpe)) : ''); };
 const workSets = en => (en.sets || []).filter(x => x.done && isWork(x));
@@ -657,7 +721,7 @@ function backupNote() {
   if (ago !== null && ago <= 7) return '';
   if (ago === null && !S.sessions.length) return '';
   const msg = ago === null ? 'Aún no has exportado un respaldo.' : `Han pasado <b>${ago} días</b> desde tu último respaldo.`;
-  return `<div class="banner spread" style="border-color:var(--gold);background:var(--gold-bg)"><span>${msg} Tus datos solo viven en este dispositivo.</span><button class="btn sm primary" data-act="exportjson">Exportar</button></div>`;
+  return `<div class="banner spread" style="border-color:var(--gold);background:var(--gold-bg)"><span>${msg} Tus datos solo viven en este dispositivo.</span><button class="btn sm primary" data-act="${driveOn() ? 'drivenow' : 'exportjson'}">${driveOn() ? 'Respaldar en Drive' : 'Exportar'}</button></div>`;
 }
 /* starter programs: [name, description, days: [name, dow, color, focus, exercises: [name, group, group2, sets, repMin, repMax, equip]]] */
 const TEMPLATES = [
@@ -715,7 +779,7 @@ function viewWelcome() {
   return emptyBlock('Bienvenido a tu bitácora', 'Elige cómo empezar. Tus datos se guardan solo en este dispositivo.')
     + `<div class="card"><h2>Empieza con una plantilla</h2><p class="small muted" style="margin:0">Un programa listo que luego puedes ajustar: ejercicios, series, repeticiones y días.</p><div class="stack" style="gap:6px">${templateList()}</div></div>
     <div class="card"><h2>Arma tu propia rutina</h2><p class="small muted" style="margin:0">Crea tus días de entrenamiento uno por uno con tus ejercicios.</p><button class="btn primary block" data-act="scratch">Crear mi rutina</button></div>
-    <div class="card"><h2>¿Ya usabas la bitácora?</h2><p class="small muted" style="margin:0">Importa tu respaldo (bitacora-datos.json) para recuperar tus rutinas y sesiones.</p><button class="btn block" data-act="importjson">Importar respaldo (JSON)</button></div>`;
+    <div class="card"><h2>¿Ya usabas la bitácora?</h2><p class="small muted" style="margin:0">Importa tu respaldo (bitacora-datos.json) para recuperar tus rutinas y sesiones.</p><button class="btn block" data-act="importjson">Importar respaldo (JSON)</button>${driveReady() ? '<button class="btn block" data-act="driverestore">Restaurar desde Google Drive</button>' : ''}</div>`;
 }
 function viewHoy() {
   if (!days().length) return backupNote() + emptyBlock('Aún no tienes días de entrenamiento', 'Arma tu rutina o parte de una plantilla para empezar a registrar.')
@@ -729,14 +793,16 @@ function viewHoy() {
   const doneNote = doneToday.length ? `<div class="banner">Ya registraste <b>${doneToday.map(s => esc(s.dayName)).join(', ')}</b> hoy. Bien hecho.</div>` : '';
   const others = days().filter(d => d !== todayDay);
   const can = S.canWrite !== false;
-  return `${backupNote()}${weekStrip()}${doneNote}${main}${can ? bodyCard() : ''}
+  return `${backupNote()}${weekStrip()}${coachCard()}${doneNote}${main}${can ? bodyCard() : ''}
     ${can && others.length ? `<div class="stack" style="gap:8px"><span class="eyebrow">Otra sesión</span><div class="other">${others.map(d => `<button data-act="start" data-day="${esc(d.id)}" style="--plate:${plate(d.color)}"><span class="dot"></span><span><b>${esc(d.name)}</b><small>${DOW[d.dow] || ''} · ${d.kind === 'cardio' ? 'cardio' : (d.exercises || []).length + ' ejercicios'}</small></span></button>`).join('')}</div></div>` : ''}`;
 }
 
 function lastW(last, i, u) { const ls = last ? (last.sets[i] || last.sets[last.sets.length - 1]) : null; const lw = ls ? num(ls.w) : null; return lw !== null && lw > 0 ? Math.round(fromKg(toKg(lw, last.unit), u) * 10) / 10 : null; }
 function makeEntry(e) {
-  const last = lastFor(e.id); const u = exUnit(e.id) || e.unit || U(); const n = Math.max(1, e.sets || 1); const sets = [];
-  for (let i = 0; i < n; i++) sets.push({ w: lastW(last, i, u), r: null, done: false });
+  const last = lastFor(e.id); const u = exUnit(e.id) || e.unit || U(); const sets = [];
+  const c = coach(e.id, { sets: e.sets, repMin: e.repMin, repMax: e.repMax }, u);
+  const n = Math.max(1, deloadOn() ? Math.ceil((e.sets || 1) / 2) : (e.sets || 1));
+  for (let i = 0; i < n; i++) sets.push({ w: c && c.w !== null ? c.w : lastW(last, i, u), r: null, done: false });
   return { exId: e.id, name: e.name, unit: u, group: e.group || '', perSide: !!e.perSide, equip: e.equip || '', target: { sets: e.sets, repMin: e.repMin, repMax: e.repMax }, sets };
 }
 function startSession(dayId) {
@@ -787,6 +853,7 @@ function openPicker(mode, ei) {
   const list = allExercises().filter(e => !used.has(e.id)).sort((x, y) => x.name.localeCompare(y.name, 'es'));
   const row = e => `<button type="button" class="pick" data-id="${esc(e.id)}"><b>${esc(e.name)}</b><small>${[e.equip ? eqLabel(e.equip) : '', e.group || '', target(e)].filter(Boolean).map(esc).join(' · ')}</small></button>`;
   modal(`<div><span class="eyebrow">${mode === 'swap' ? 'Cambiar ' + esc(cur.name) : 'Agregar a ' + esc(a.dayName)}</span><h2>${mode === 'swap' ? 'Elige el ejercicio que hiciste' : 'Agregar ejercicio'}</h2></div>
+    <button type="button" class="btn block" id="pk-cat">Elegir del catálogo (con imágenes)</button>
     ${list.length ? `<input id="pk-q" class="pk-q" placeholder="Buscar en tus ejercicios" autocomplete="off"><div class="pick-list" id="pk-list">${list.map(row).join('')}</div>` : ''}
     <details class="pk" id="pk-new" ${list.length ? '' : 'open'}><summary>Crear un ejercicio nuevo</summary><div class="stack" style="gap:8px;margin-top:8px">
       <label class="field">Nombre<input id="pk-n" placeholder="Ej.: Peso muerto rumano"></label>
@@ -807,10 +874,11 @@ function openPicker(mode, ei) {
   };
   if ($('#pk-rm')) $('#pk-rm').onclick = () => { S.active.entries.splice(ei, 1); queueSave(); closeModal(); render(); toast('Ejercicio quitado de la sesión de hoy'); };
   $('#pk-x').onclick = closeModal;
+  $('#pk-cat').onclick = () => { const keep = !!($('#pk-keep') && $('#pk-keep').checked); openCatalog(r => pickEx(mode, ei, r.def, r.isNew, keep), { title: mode === 'swap' ? 'Cambiar ' + cur.name : 'Agregar a ' + a.dayName, group: cur && (exInfo(cur.exId) || {}).group, onCancel: () => openPicker(mode, ei) }); };
 }
-async function pickEx(mode, ei, def, isNew) {
+async function pickEx(mode, ei, def, isNew, keepOpt) {
   if (!def || !S.active) return;
-  const keep = !!($('#pk-keep') && $('#pk-keep').checked); const a = S.active; const day = dayById(a.dayId);
+  const keep = keepOpt !== undefined ? keepOpt : !!($('#pk-keep') && $('#pk-keep').checked); const a = S.active; const day = dayById(a.dayId);
   const c = { ...def }; delete c.color;
   if ((isNew || keep) && S.routines && S.canWrite !== false) {
     const nr = clone(S.routines);
@@ -851,7 +919,7 @@ function viewSession() {
     const ex = { sets: en.target.sets, repMin: en.target.repMin, repMax: en.target.repMax };
     const last = lastFor(en.exId, a.id);
     const u = eu(en, a);
-    const sug = suggestion(ex, last, u);
+    const cc = coach(en.exId, ex, u, a.id); const stl = stallOf(en.exId);
     const lastTxt = last ? `Última (${fmtDate(last.date, { day: 'numeric', month: 'short' })}): ${last.sets.map(s => setStr(s, last.unit, u)).join(' · ')} ${u}` : 'Primera vez: anota con qué peso empiezas';
     let wi = 0;
     const rows = en.sets.map((s, si) => {
@@ -861,7 +929,7 @@ function viewSession() {
       if (work) wi++;
       let prev = work ? (ls ? setStr(ls, last.unit, u) : '—') : 'Calent.';
       if (s.done && work) prev = `<select class="rpe" data-rpe="1" aria-label="RPE serie ${si + 1}"><option value="">RPE</option>${RPES.map(v => `<option value="${v}" ${num(s.rpe) === v ? 'selected' : ''}>RPE ${fmtN(v)}</option>`).join('')}</select>`;
-      const ph = work ? (ls ? num(ls.r) : en.target.repMin) : '';
+      const ph = work ? (cc ? cc.reps : ls ? num(ls.r) : en.target.repMin) : '';
       return `<div class="set t-${t} ${s.done ? 'done' : ''} ${s.pr ? 'pr' : ''}" data-ei="${ei}" data-si="${si}">
         <button type="button" class="sn" data-act="stype" aria-label="Tipo de serie: ${STYPE_NAME[t]}. Toca para cambiar" title="${STYPE_NAME[t]}">${label}</button><span class="prev">${prev}</span>
         <input id="w-${ei}-${si}" data-f="w" inputmode="decimal" aria-label="Peso serie ${si + 1}" value="${s.w ?? ''}" placeholder="${u}">
@@ -871,7 +939,7 @@ function viewSession() {
     const hasWarm = en.sets.some(x => x.t === 'w');
     return `<section class="ex"><div><div class="spread" style="align-items:flex-start"><div class="ex-name">${thumb(en.exId)}<h3>${esc(en.name)}</h3></div><div class="seg useg" role="group" aria-label="Unidad de ${esc(en.name)}">${['kg', 'lb'].map(x => `<button type="button" data-act="eunit" data-ei="${ei}" data-u="${x}" aria-pressed="${u === x}">${x}</button>`).join('')}</div></div><div class="meta">${target({ ...ex, perSide: en.perSide })} · ${lastTxt}</div>
       <div class="ex-opts"><label class="eq"><select data-eq="${ei}" aria-label="Equipo de ${esc(en.name)}">${eqOpts(en)}</select></label><button type="button" class="chip sm" data-act="erest" data-ei="${ei}" aria-label="Descanso de ${esc(en.name)}">Descanso ${clock(restFor(en.exId) * 1000)}</button><button type="button" class="chip sm" data-act="exswap" data-ei="${ei}">Cambiar</button></div></div>
-      ${sug ? `<span class="hint up">${ICON.up.replace('<svg', '<svg width="14" height="14"')}${esc(sug.txt)}</span>` : ''}
+      ${cc ? `<div class="coach ${cc.kind}"><span>${cc.kind === 'up' ? ICON.up.replace('<svg', '<svg width="14" height="14" style="vertical-align:-2px"') + ' ' : ''}<b>Entrenador:</b> ${esc(cc.txt)}</span>${stl && cc.kind !== 'up' && cc.kind !== 'deload' ? `<small>Sin superar tu mejor marca hace ${stl.weeks} semanas. ${esc(stallTip(en.exId))}</small>` : ''}</div>` : ''}
       <div class="sets"><div class="set-h"><span>#</span><span>Anterior</span><span>${u}</span><span>Reps</span><span></span></div>${rows}</div>
       <div class="set-actions"><div class="ex-tools"><button class="btn sm" data-act="addset" data-ei="${ei}">+ Serie</button>${hasWarm ? `<button class="btn sm ghost" data-act="rmwarm" data-ei="${ei}">Quitar calent.</button>` : `<button class="btn sm" data-act="warm" data-ei="${ei}">+ Calentamiento</button>`}<button class="btn sm" data-act="plates" data-ei="${ei}">Discos</button></div>${en.sets.length > 1 ? `<button class="btn sm ghost" data-act="delset" data-ei="${ei}">Quitar última</button>` : ''}</div></section>`;
   }).join('');
@@ -1015,6 +1083,7 @@ async function finishSession() {
   if (!S.sessions.some(x => x.id === summary.id && x.status === 'done')) S.sessions = S.sessions.filter(x => x.id !== summary.id).concat([summary]);
   render(); window.scrollTo(0, 0);
   showSummary(summary, 'Sesión guardada');
+  driveAfterSession().then(h => { if (h && $('#sumOk')) $('#sumOk').closest('.row').insertAdjacentHTML('beforebegin', h); });
 }
 
 /* post-session summary compared with the previous time this day was trained */
@@ -1302,11 +1371,12 @@ function viewRut() {
   const settings = `<div class="card"><h2>Ajustes</h2>
     <div class="spread"><span class="stack" style="gap:0"><span>Unidad por defecto</span><span class="small muted">Para ejercicios nuevos y totales de volumen. Cada ejercicio tiene su propia unidad.</span></span><div class="seg">${['kg', 'lb'].map(u => `<button data-act="unit" data-u="${u}" aria-pressed="${st.unit === u}" ${can ? '' : 'disabled'}>${u}</button>`).join('')}</div></div>
     <div class="stack" style="gap:6px"><span>Descanso general entre series</span><div class="chips" style="flex-wrap:wrap">${RESTS.map(s => `<button class="chip" data-act="rest" data-s="${s}" aria-pressed="${num(st.rest) === s}" ${can ? '' : 'disabled'}>${s >= 60 ? clock(s * 1000) : s + ' s'}</button>`).join('')}</div><span class="small muted">Cada ejercicio puede tener su propio descanso: tócalo durante la sesión o cámbialo en Editar. Después de una serie de calentamiento el descanso es de 1 min como máximo.</span></div>
-    <div class="stack" style="gap:6px"><span>Meta semanal de sesiones</span><div class="chips">${[2, 3, 4, 5, 6, 7].map(n => `<button class="chip" data-act="goal" data-n="${n}" aria-pressed="${weekGoal() === n}" ${can ? '' : 'disabled'}>${n}</button>`).join('')}</div><span class="small muted">Cada semana que la cumplas suma a tu racha.</span></div></div>
+    <div class="stack" style="gap:6px"><span>Meta semanal de sesiones</span><div class="chips">${[2, 3, 4, 5, 6, 7].map(n => `<button class="chip" data-act="goal" data-n="${n}" aria-pressed="${weekGoal() === n}" ${can ? '' : 'disabled'}>${n}</button>`).join('')}</div><span class="small muted">Cada semana que la cumplas suma a tu racha.</span></div>
+    <div class="spread"><span class="stack" style="gap:0"><span>Semana de descarga</span><span class="small muted">El entrenador te la propone cuando detecta fatiga; también puedes empezarla tú.</span></span>${deloadOn() ? '<button class="btn sm" data-act="deloadoff">Terminar</button>' : '<button class="btn sm" data-act="deloadon">Empezar</button>'}</div></div>
     <div class="card"><h2>Barra y discos</h2><p class="small muted" style="margin:0">Para la calculadora de discos y el calentamiento automático. La barra de cada ejercicio se elige en la calculadora, durante la sesión.</p>
     ${['kg', 'lb'].map(u => `<div class="stack" style="gap:6px"><span>Barra por defecto (${u})</span><div class="chips">${(u === 'kg' ? [20, 15, 10] : [45, 35, 25]).map(b => `<button class="chip" data-act="dbar" data-u="${u}" data-b="${b}" aria-pressed="${barFor('', u) === b}" ${can ? '' : 'disabled'}>${b} ${u}</button>`).join('')}</div>
       <span>Discos que tienes (${u})</span><div class="chips" style="flex-wrap:wrap">${PLATES_ALL[u].map(pl => `<button class="chip" data-act="ptog" data-u="${u}" data-p="${pl}" aria-pressed="${platesFor(u).includes(pl)}" ${can ? '' : 'disabled'}>${fmtN(pl, 2)}</button>`).join('')}</div></div>`).join('')}</div>
-    <div class="card"><h2>Respaldo</h2><p class="small muted" style="margin:0">Tus datos viven solo en este dispositivo. Exporta el respaldo JSON al menos una vez por semana y guárdalo en tu Drive o tu computadora: es el único archivo que se puede volver a importar (en este u otro teléfono).</p>
+    ${driveCard()}<div class="card"><h2>Respaldo</h2><p class="small muted" style="margin:0">Tus datos viven solo en este dispositivo. Exporta el respaldo JSON al menos una vez por semana y guárdalo en tu Drive o tu computadora: es el único archivo que se puede volver a importar (en este u otro teléfono).</p>
     ${st.lastBackup ? `<p class="small" style="margin:0">Último respaldo JSON: <b>${fmtDate(st.lastBackup, { weekday: 'long', day: 'numeric', month: 'long' })}</b></p>` : ''}
     <button class="btn primary block" data-act="exportjson">${ICON.dl}Exportar respaldo (JSON)</button>
     <button class="btn block" data-act="importjson">Importar respaldo</button>
@@ -1319,7 +1389,7 @@ function viewEditor() {
   const d = S.editDraft;
   const items = (d.exercises || []).map((e, i) => `<div class="ed-item" data-i="${i}">
     <div class="ed-row">
-      <label class="field">Ejercicio<input id="ed-n-${i}" data-ed="name" value="${esc(e.name)}"></label>
+      <label class="field">Ejercicio<span class="row" style="gap:6px;flex-wrap:nowrap">${edThumb(e)}<input id="ed-n-${i}" data-ed="name" value="${esc(e.name)}" placeholder="Nombre del ejercicio"></span></label>
       <label class="field">Series<input id="ed-s-${i}" data-ed="sets" inputmode="numeric" value="${e.sets}"></label>
       <label class="field">Reps mín<input id="ed-a-${i}" data-ed="repMin" inputmode="numeric" value="${e.repMin}"></label>
       <label class="field">Reps máx<input id="ed-b-${i}" data-ed="repMax" inputmode="numeric" value="${e.repMax}"></label>
@@ -1389,7 +1459,8 @@ function openExImg(exId) {
   const pics = !im ? `<div class="banner">Este ejercicio aún no tiene imagen. Búscala en el banco de ejercicios o toma una foto de la máquina de tu gym.</div>`
     : im.own ? `<div class="ref-imgs"><figure><img src="${esc(im.own)}" alt="Tu foto de ${esc(e.name)}"><figcaption>Tu foto</figcaption></figure></div>`
     : `<div class="ref-imgs"><figure><img src="${imgUrl(im.db, 0)}" alt="${esc(e.name)}: posición inicial"><figcaption>Inicio</figcaption></figure><figure><img src="${imgUrl(im.db, 1)}" alt="${esc(e.name)}: posición final"><figcaption>Final</figcaption></figure></div><p class="small muted" style="margin:0">Imagen de referencia: free-exercise-db (dominio público). Puede no ser idéntica a la máquina de tu gym.</p>`;
-  modal(`<div><span class="eyebrow">Imagen de referencia</span><h2>${esc(e.name)}</h2></div>${pics}
+  const ci = catInfo(exId); const why = ci ? `<p class="small" style="margin:0"><b>Por qué:</b> ${esc(ci.item[6])} ${ci.item[7] ? refLink(ci.item[7]) : ''}</p>` : '';
+  modal(`<div><span class="eyebrow">Imagen de referencia</span><h2>${esc(e.name)}</h2></div>${pics}${why}
     <div class="grid2"><button type="button" class="btn" id="xiFind">Buscar imagen</button><button type="button" class="btn" id="xiPhoto">Tomar o subir foto</button></div>
     <div class="row">${im ? '<button type="button" class="btn ghost danger" id="xiNone">Quitar imagen</button>' : ''}<button type="button" class="btn primary" id="xiOk">Listo</button></div>`);
   $('#xiOk').onclick = closeModal;
@@ -1451,6 +1522,61 @@ $('#photoFile').addEventListener('change', async ev => {
     if (await setExImg(exId, 'own')) { render(); openExImg(exId); toast('Foto guardada'); }
   } catch (er) { toast('No se pudo leer esa imagen. Prueba con otra.'); }
 });
+function edThumb(e) {
+  const im = e.img && e.img !== 'own' && e.img !== 'none' ? { db: e.img } : (e.id ? exImg(e.id) : null);
+  const src = im ? (im.own || imgUrl(im.db)) : '';
+  return src ? `<img class="ed-thumb" src="${esc(src)}" alt="" loading="lazy">` : '';
+}
+
+/* ---------- CATÁLOGO ---------- */
+const CAT = window.CATALOG || {}; const CAT_REFS = window.CATALOG_REFS || {};
+function catDef(group, item, vi) {
+  const [name, g2, sets, repMin, repMax, vars] = item; const [equip, img] = vars[vi] || vars[0]; const base = slug(name);
+  const d = { id: vi ? base + '~' + equip : base, name: vi ? name + ' (' + eqLabel(equip).toLowerCase() + ')' : name, group, sets, repMin, repMax, unit: U(), equip, img };
+  if (g2 && g2 !== 'Otros') d.group2 = g2; if (vi) d.base = base;
+  return d;
+}
+/* the person's own exercise wins when it is the same one (same id or name): it keeps its history */
+function resolveCat(def) {
+  const ex = allExercises().find(e => e.id === def.id || norm(e.name) === norm(def.name));
+  if (!ex) return { def, isNew: true };
+  const c = clone(ex); delete c.color; if (!c.img && def.img && !exImg(c.id)) c.img = def.img;
+  return { def: c, isNew: false };
+}
+function catInfo(exId) {
+  const ids = [exId, baseOf(exId), String(exId).split('~')[0]];
+  for (const [g, items] of Object.entries(CAT)) for (const it of items) if (ids.includes(slug(it[0]))) return { group: g, item: it };
+  return null;
+}
+const refLink = k => CAT_REFS[k] ? `<a href="${esc(CAT_REFS[k][1])}" target="_blank" rel="noopener" title="${esc(CAT_REFS[k][0])}">Fuente</a>` : '';
+function openCatalog(onPick, opts = {}) {
+  const groups = Object.keys(CAT); let grp = opts.group && CAT[opts.group] ? opts.group : (S.catGroup || groups[0]);
+  const mine = new Set(allExercises().map(e => e.id)); const mineN = new Set(allExercises().map(e => norm(e.name)));
+  modal(`<div><span class="eyebrow">Catálogo de ejercicios</span><h2>${esc(opts.title || 'Elige un ejercicio')}</h2></div>
+    <input id="ct-q" class="pk-q" placeholder="Buscar: sentadilla, remo, curl…" autocomplete="off">
+    <div class="chips" id="ct-g">${groups.map(g => `<button class="chip sm" data-g="${esc(g)}" aria-pressed="${g === grp}">${esc(g)}</button>`).join('')}</div>
+    <div class="pick-list" id="ct-list" style="max-height:52vh"></div>
+    <p class="small muted" style="margin:0">Toca un ejercicio o la variante con tu equipo. Cada variante lleva su propio historial y récords.</p>
+    <div class="row">${opts.custom ? '<button type="button" class="btn ghost" id="ct-own" style="margin-right:auto">Escribir uno propio</button>' : ''}<button type="button" class="btn ghost" id="ct-x">Cancelar</button></div>`);
+  const draw = () => {
+    const q = norm($('#ct-q').value.trim());
+    const rows = [];
+    for (const [g, items] of Object.entries(CAT)) { if (!q && g !== grp) continue; items.forEach((it, i) => { if (!q || norm(it[0]).includes(q) || norm(g).includes(q)) rows.push([g, i, it]); }); }
+    $('#ct-list').innerHTML = rows.map(([g, i, it]) => {
+      const [name, g2, sets, a, b, vars, note, ref] = it; const have = mine.has(slug(name)) || mineN.has(norm(name));
+      return `<div class="cat-item"><button type="button" class="pick has-img" data-g="${esc(g)}" data-i="${i}" data-v="0"><img src="${imgUrl(vars[0][1])}" alt="" loading="lazy"><span><b>${esc(name)}</b>${have ? ' <span class="new" style="color:var(--ok);background:transparent;padding:0">En tu rutina</span>' : ''}<br><small>${sets} × ${a === b ? a : a + '–' + b}${q ? ' · ' + esc(g) : ''}${g2 && g2 !== 'Otros' ? ' · también ' + esc(g2.toLowerCase()) : ''}</small></span></button>
+        <div class="cat-vars">${vars.map(([eq], vi) => `<button type="button" class="chip sm" data-g="${esc(g)}" data-i="${i}" data-v="${vi}">${esc(eqLabel(eq))}</button>`).join('')}</div>
+        <p class="small muted" style="margin:0">${esc(note)} ${ref ? refLink(ref) : ''}</p></div>`;
+    }).join('') || '<p class="small muted" style="margin:0">Sin resultados.</p>';
+  };
+  $('#ct-q').addEventListener('input', draw);
+  $('#ct-g').addEventListener('click', e => { const b = e.target.closest('[data-g]'); if (!b) return; grp = S.catGroup = b.dataset.g; $('#ct-q').value = ''; $('#ct-g').querySelectorAll('[data-g]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); draw(); });
+  $('#ct-list').addEventListener('click', e => { if (e.target.closest('a')) return; const b = e.target.closest('[data-v]'); if (!b) return; onPick(resolveCat(catDef(b.dataset.g, CAT[b.dataset.g][+b.dataset.i], +b.dataset.v))); });
+  $('#ct-x').onclick = opts.onCancel || closeModal;
+  if (opts.custom) $('#ct-own').onclick = opts.custom;
+  draw();
+}
+
 /* keep the routine's images available without internet */
 let warmed = '';
 function warmImages() {
@@ -1538,38 +1664,141 @@ async function exportExcel() {
 }
 
 /* JSON backup: { docs: { "col/id": data } }, same format as the original artifact export */
+async function backupText() {
+  const docs = await S.db.exportAll();
+  return JSON.stringify({ app: 'bitacora-gym', format: 1, exportedAt: new Date().toISOString(), note: 'Claves = ruta del documento (coleccion/id). Valores = datos del documento.', docs }, null, 1);
+}
 async function exportJSON() {
   await flushSave();
   S.settings.lastBackup = today();
   if (!(await write('config/settings', { ...S.settings }))) return;
-  const docs = await S.db.exportAll();
-  const out = { app: 'bitacora-gym', format: 1, exportedAt: new Date().toISOString(), note: 'Claves = ruta del documento (coleccion/id). Valores = datos del documento.', docs };
-  saveFile('bitacora-datos-' + today() + '.json', JSON.stringify(out, null, 1), 'application/json');
+  saveFile('bitacora-datos-' + today() + '.json', await backupText(), 'application/json');
   toast('Respaldo descargado'); render();
 }
 function importJSON() { const f = $('#importFile'); f.value = ''; f.click(); }
 $('#importFile').addEventListener('change', async e => {
   const file = e.target.files && e.target.files[0]; if (!file) return;
+  let j; try { j = JSON.parse(await file.text()); } catch (er) { toast('Ese archivo no es un respaldo válido de la bitácora.'); return; }
+  importBackup(j);
+});
+async function importBackup(j, keep) {
   let docs;
   try {
-    const j = JSON.parse(await file.text()); docs = j && j.docs;
+    docs = j && j.docs;
     if (!docs || typeof docs !== 'object' || Array.isArray(docs)) throw 0;
     for (const [k, v] of Object.entries(docs)) if (!/^[^/]+\/[^/]+$/.test(k) || !v || typeof v !== 'object') throw 0;
     if (!docs['config/routines']) throw 0;
     // the file itself is a backup as of its export date
-    const st = docs['config/settings'] = { ...(docs['config/settings'] || {}) };
+    const st = docs['config/settings'] = { ...(docs['config/settings'] || {}), ...(keep || {}) };
     if (!st.lastBackup && j.exportedAt) st.lastBackup = isoOf(new Date(j.exportedAt));
-  } catch (er) { toast('Ese archivo no es un respaldo válido de la bitácora.'); return; }
+  } catch (er) { toast('Ese archivo no es un respaldo válido de la bitácora.'); return false; }
   const nS = Object.keys(docs).filter(k => k.startsWith('sessions/')).length, nB = Object.keys(docs).filter(k => k.startsWith('body/')).length;
   if (!S.dbEmpty) {
     const ok = await confirmBox({ title: 'Importar respaldo', body: `Se reemplazará todo lo que hay en este dispositivo por el respaldo (${nS} sesiones, ${nB} medidas). Si no lo has hecho, exporta antes un respaldo de lo actual.` }, 'Reemplazar', true);
-    if (!ok) return;
+    if (!ok) return false;
   }
   if (S.active) { clearTimeout(saveTimer); dirty = false; await saving; dropActive(); }
-  try { await S.db.replaceAll(docs); } catch (er) { writeErr(er); return; }
+  try { await S.db.replaceAll(docs); } catch (er) { writeErr(er); return false; }
   S.dbEmpty = false; S.tab = 'hoy'; render();
   toast(`Respaldo importado: ${nS} sesiones`);
-});
+  return true;
+}
+
+/* ---------- GOOGLE DRIVE ----------
+   Uses Google Identity Services (token in memory, ~1 h) with the drive.file scope: the app only sees
+   the file it created. One file, overwritten on every backup; Drive keeps earlier versions. */
+const GOOGLE_CLIENT_ID = '';
+const DRIVE_FILE = 'bitacora-gym-respaldo.json';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+let gis = null, gToken = null, gExp = 0, driveBusy = false;
+const driveReady = () => !!GOOGLE_CLIENT_ID;
+const driveOn = () => driveReady() && !!S.settings.drive;
+const tokenValid = () => gToken && Date.now() < gExp - 60000;
+function loadGis() {
+  if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+  if (!gis) gis = new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.onload = res; sc.onerror = () => { gis = null; rej(new Error('gis')); }; document.head.appendChild(sc); });
+  return gis;
+}
+/* must start inside a tap: Google opens a small window to confirm the account */
+function driveToken(first) {
+  if (tokenValid()) return Promise.resolve(gToken);
+  return new Promise((res, rej) => {
+    if (!(window.google && google.accounts && google.accounts.oauth2)) { loadGis().catch(() => {}); rej(new Error('gis')); return; }
+    const tc = google.accounts.oauth2.initTokenClient({ client_id: GOOGLE_CLIENT_ID, scope: DRIVE_SCOPE,
+      callback: r => { if (r && r.access_token) { gToken = r.access_token; gExp = Date.now() + (r.expires_in || 3600) * 1000; res(gToken); } else rej(new Error(r && r.error || 'denied')); },
+      error_callback: er => rej(new Error(er && er.type || 'popup')) });
+    tc.requestAccessToken({ prompt: first ? 'consent' : '' });
+  });
+}
+async function gfetch(url, opt = {}) {
+  const r = await fetch(url, { ...opt, headers: { ...(opt.headers || {}), Authorization: 'Bearer ' + gToken } });
+  if (r.status === 401) { gToken = null; throw new Error('auth'); }
+  return r;
+}
+async function driveUpload() {
+  await flushSave();
+  S.settings.lastBackup = today();
+  const drive = { ...(S.settings.drive || {}) }; S.settings.drive = drive;
+  await write('config/settings', { ...S.settings });
+  const body = await backupText();
+  const meta = { name: DRIVE_FILE, mimeType: 'application/json', description: 'Respaldo de Bitácora de Gym. Impórtalo desde Rutinas › Respaldo › Restaurar desde Drive.' };
+  const send = (id) => {
+    const fd = new FormData();
+    fd.append('metadata', new Blob([JSON.stringify(id ? { description: meta.description } : meta)], { type: 'application/json' }));
+    fd.append('file', new Blob([body], { type: 'application/json' }));
+    return gfetch('https://www.googleapis.com/upload/drive/v3/files' + (id ? '/' + id : '') + '?uploadType=multipart&fields=id,modifiedTime', { method: id ? 'PATCH' : 'POST', body: fd });
+  };
+  let r = drive.fileId ? await send(drive.fileId) : null;
+  if (!r || r.status === 404) r = await send(null);
+  if (!r.ok) throw new Error('upload ' + r.status);
+  const f = await r.json();
+  S.settings.drive = { fileId: f.id, last: new Date().toISOString() };
+  await write('config/settings', { ...S.settings });
+}
+/* tap handler: get a token (asks Google if needed), then upload */
+async function driveBackupNow(first) {
+  if (driveBusy) return; driveBusy = true; softRender();
+  try {
+    await driveToken(first);
+    if (first && !S.settings.drive) S.settings.drive = {};
+    await driveUpload();
+    toast('Respaldo guardado en Google Drive');
+  } catch (e) {
+    const m = e && e.message;
+    if (m === 'gis') toast('Preparando la conexión con Google… vuelve a tocar el botón.');
+    else if (m === 'popup' || m === 'popup_closed' || m === 'access_denied' || m === 'denied') toast('No se completó el permiso de Google.');
+    else toast('No se pudo respaldar en Drive. Revisa tu conexión.');
+  } finally { driveBusy = false; render(); }
+}
+/* after a session: silent if Google already gave a token in this visit; otherwise one tap in the summary */
+async function driveAfterSession() {
+  if (!driveOn()) return '';
+  if (tokenValid()) { try { await driveUpload(); return '<p class="small" style="margin:0;color:var(--ok)">✓ Respaldo guardado en Google Drive</p>'; } catch (e) {} }
+  return '<button type="button" class="btn block" data-act="drivenow" id="sumDrive">Respaldar en Google Drive</button>';
+}
+async function driveRestore() {
+  try {
+    await driveToken(!S.settings.drive);
+    const q = encodeURIComponent(`name='${DRIVE_FILE}' and trashed=false`);
+    const l = await (await gfetch(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime desc&fields=files(id,modifiedTime)&pageSize=5`)).json();
+    const f = l.files && l.files[0];
+    if (!f) { toast('No hay respaldos de la bitácora en tu Drive.'); return; }
+    const j = await (await gfetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`)).json();
+    if (await importBackup(j, { drive: { fileId: f.id, last: f.modifiedTime } })) toast('Respaldo de Drive restaurado (' + fmtDate(isoOf(new Date(f.modifiedTime)), { day: 'numeric', month: 'short' }) + ')');
+  } catch (e) { toast(e && e.message === 'gis' ? 'Preparando la conexión con Google… vuelve a tocar el botón.' : 'No se pudo leer tu Drive. Inténtalo de nuevo.'); }
+}
+function driveCard() {
+  if (!driveReady()) return '';
+  const d = S.settings.drive;
+  return `<div class="card"><h2>Google Drive</h2>
+    ${d ? `<p class="small" style="margin:0">${d.last ? `Último respaldo en Drive: <b>${fmtDate(isoOf(new Date(d.last)), { weekday: 'long', day: 'numeric', month: 'long' })}</b>` : 'Conectado.'}</p>
+      <p class="small muted" style="margin:0">Al terminar cada sesión se guarda en el archivo <b>${DRIVE_FILE}</b> de tu Drive. Si Google pide confirmar, verás el botón “Respaldar en Google Drive” en el resumen.</p>
+      <button class="btn primary block" data-act="drivenow" ${driveBusy ? 'disabled' : ''}>${driveBusy ? 'Respaldando…' : 'Respaldar ahora'}</button>
+      <div class="grid2"><button class="btn" data-act="driverestore">Restaurar desde Drive</button><button class="btn ghost danger" data-act="driveoff">Desconectar</button></div>`
+    : `<p class="small muted" style="margin:0">Guarda tu respaldo automáticamente en tu Google Drive al terminar cada sesión. La app solo puede ver el archivo que ella crea.</p>
+      <button class="btn primary block" data-act="driveconnect" ${driveBusy ? 'disabled' : ''}>Conectar Google Drive</button>
+      <button class="btn block" data-act="driverestore">Restaurar desde Drive</button>`}</div>`;
+}
 
 /* ---------- events ---------- */
 $('#view').addEventListener('click', async e => {
@@ -1603,6 +1832,10 @@ $('#view').addEventListener('click', async e => {
   }
   else if (act === 'export') exportExcel();
   else if (act === 'exportjson') exportJSON();
+  else if (act === 'driveconnect') driveBackupNow(true);
+  else if (act === 'drivenow') driveBackupNow(false);
+  else if (act === 'driverestore') driveRestore();
+  else if (act === 'driveoff') { if (await confirmBox({ title: 'Desconectar Google Drive', body: 'Dejará de respaldarse automáticamente. El archivo que ya está en tu Drive no se borra.' }, 'Desconectar', true)) { delete S.settings.drive; gToken = null; write('config/settings', { ...S.settings }); render(); } }
   else if (act === 'importjson') importJSON();
   else if (act === 'finish') finishSession();
   else if (act === 'discard') discardSession();
@@ -1643,8 +1876,13 @@ $('#view').addEventListener('click', async e => {
   else if (act === 'edcancel') { S.editDay = null; S.editDraft = null; render(); }
   else if (act === 'mv') { const i = +b.dataset.i, j = i + +b.dataset.d, x = S.editDraft.exercises; if (j >= 0 && j < x.length) { [x[i], x[j]] = [x[j], x[i]]; render(); } }
   else if (act === 'rmex') { S.editDraft.exercises.splice(+b.dataset.i, 1); render(); }
-  else if (act === 'addex') { S.editDraft.exercises.push({ id: '', name: '', unit: U(), group: '', sets: 3, repMin: 8, repMax: 12 }); render(); const i = S.editDraft.exercises.length - 1; const el = $('#ed-n-' + i); el && el.focus(); }
+  else if (act === 'addex') openCatalog(r => {
+    const d = S.editDraft; if (d.exercises.some(x => x.id === r.def.id)) { toast(r.def.name + ' ya está en este día.'); return; }
+    d.exercises.push(clone(r.def)); closeModal(); render(); toast('Agregado: ' + r.def.name);
+  }, { title: 'Agregar a ' + (S.editDraft.name || 'este día'), custom: () => { closeModal(); S.editDraft.exercises.push({ id: '', name: '', unit: U(), group: '', sets: 3, repMin: 8, repMax: 12 }); render(); const i = S.editDraft.exercises.length - 1; const el = $('#ed-n-' + i); el && el.focus(); } });
   else if (act === 'eximg') openExImg(b.dataset.ex);
+  else if (act === 'deloadon') { S.settings.deloadUntil = isoOf(addDays(new Date(), 6)); S.settings.lastDeload = today(); write('config/settings', { ...S.settings }); render(); toast('Semana de descarga activada'); }
+  else if (act === 'deloadoff') { delete S.settings.deloadUntil; write('config/settings', { ...S.settings }); render(); toast('Descarga terminada'); }
   else if (act === 'newday') newDay();
   else if (act === 'templates') openTemplates();
   else if (act === 'tpl') useTemplate(+b.dataset.i);
@@ -1698,7 +1936,10 @@ $('#view').addEventListener('click', async e => {
     if (await write('config/routines', nr)) { S.routines = nr; S.editDay = null; S.editDraft = null; render(); toast(isNew ? 'Día creado' : 'Rutina guardada'); }
   }
 });
-$('#modalIn').addEventListener('click', e => { const b = e.target.closest('[data-act="tpl"]'); if (b) useTemplate(+b.dataset.i); });
+$('#modalIn').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act="tpl"]'); if (b) useTemplate(+b.dataset.i);
+  const d = e.target.closest('#sumDrive'); if (d) { d.disabled = true; d.textContent = 'Respaldando…'; try { await driveToken(false); await driveUpload(); d.outerHTML = '<p class="small" style="margin:0;color:var(--ok)">✓ Respaldo guardado en Google Drive</p>'; } catch (er) { d.disabled = false; d.textContent = 'Respaldar en Google Drive'; toast(er && er.message === 'gis' ? 'Preparando la conexión con Google… vuelve a tocar.' : 'No se pudo respaldar en Drive.'); } }
+});
 $('#view').addEventListener('input', e => {
   const t = e.target;
   if (t.dataset.f && S.active) { const r = t.closest('.set'); const s = S.active.entries[+r.dataset.ei].sets[+r.dataset.si]; s[t.dataset.f] = num(t.value); queueSave(); }
@@ -1728,6 +1969,7 @@ async function boot() {
   // ask the browser not to evict our data under storage pressure
   try { if (navigator.storage && navigator.storage.persist) S.persisted = (await navigator.storage.persisted()) || (await navigator.storage.persist()); } catch (e) {}
   const onErr = () => { S.offline = true; render(); };
+  setTimeout(() => { if (driveReady() && navigator.onLine) loadGis().catch(() => {}); }, 1500);
   db.doc('config/routines').onSnapshot(s => { S.routines = s.exists ? s.data() : null; S.loaded.routines = true; softRender(); warmImages(); }, onErr);
   db.doc('config/settings').onSnapshot(s => { S.settings = { ...DEF_SETTINGS, ...(s.exists ? s.data() : {}) }; softRender(); }, onErr);
   db.collection('photos').onSnapshot(q => { const m = {}; for (const d of q.docs) m[d.id] = d.data().data; S.photos = m; softRender(); }, onErr);
