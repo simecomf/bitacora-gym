@@ -1707,7 +1707,7 @@ async function importBackup(j, keep) {
 /* ---------- GOOGLE DRIVE ----------
    Uses Google Identity Services (token in memory, ~1 h) with the drive.file scope: the app only sees
    the file it created. One file, overwritten on every backup; Drive keeps earlier versions. */
-const GOOGLE_CLIENT_ID = '';
+const GOOGLE_CLIENT_ID = '802175350089-ll3k6d0mf8e1tn48rj25a8bri6c05vb7.apps.googleusercontent.com';
 const DRIVE_FILE = 'bitacora-gym-respaldo.json';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 let gis = null, gToken = null, gExp = 0, driveBusy = false;
