@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacidad · Bitácora de Gym</title>
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<style>
+:root{--bg:#F1F2F4;--surface:#fff;--ink:#14171C;--muted:#5D6570;--line:#D6DAE0;--link:#2A5FC4}
+@media (prefers-color-scheme:dark){:root{--bg:#0F1114;--surface:#181B20;--ink:#ECEEF1;--muted:#9AA3AF;--line:#2D3239;--link:#5B8BEA}}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:680px;margin:0 auto;padding:24px 16px 48px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px}
+h1{font-size:26px;margin:0 0 4px}h2{font-size:18px;margin:24px 0 6px}
+p,li{margin:6px 0}.muted{color:var(--muted);font-size:14px}a{color:var(--link)}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:16px}.brand img{width:40px;height:40px;border-radius:10px}
+</style>
+</head>
+<body>
+<main>
+<div class="brand"><img src="icons/icon-192.png" alt=""><b>Bitácora de Gym</b></div>
+<div class="card">
+<h1>Política de privacidad</h1>
+<p class="muted">Última actualización: 20 de octubre de 2026</p>
+
+<h2>Qué datos guarda la app</h2>
+<p>Bitácora de Gym guarda tus rutinas, sesiones de entrenamiento, medidas corporales, ajustes y las fotos que tú agregues a tus ejercicios. Todo se guarda <b>solo en tu dispositivo</b>, en el almacenamiento del navegador. La app no tiene servidores propios y no envía tus datos a nadie.</p>
+
+<h2>Google Drive (opcional)</h2>
+<p>Si decides conectar Google Drive, la app usa el permiso <code>drive.file</code> de Google. Con ese permiso la app solo puede crear y actualizar <b>su propio archivo de respaldo</b> (<code>bitacora-gym-respaldo.json</code>) en tu Drive y leerlo para restaurarlo. No puede ver, leer ni modificar ningún otro archivo de tu Google Drive.</p>
+<ul>
+<li>La conexión ocurre directamente entre tu dispositivo y Google; ningún tercero recibe tus datos ni tu acceso.</li>
+<li>El permiso de acceso se guarda solo en la memoria de la app mientras está abierta y no se almacena en ningún servidor.</li>
+<li>Puedes desconectar Drive desde la app (Rutinas › Google Drive › Desconectar) y retirar el permiso en <a href="https://myaccount.google.com/permissions" rel="noopener">myaccount.google.com/permissions</a>.</li>
+</ul>
+<p>El uso de la información recibida de las APIs de Google cumple con la <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener">Política de datos de usuario de los servicios de API de Google</a>, incluidos los requisitos de uso limitado.</p>
+
+<h2>Servicios externos</h2>
+<p>Para funcionar, la app descarga recursos públicos: las imágenes de ejercicios (free-exercise-db, vía jsDelivr), la librería para generar Excel (cdnjs) y las fuentes tipográficas (Google Fonts). Estas descargas no incluyen tus datos de entrenamiento.</p>
+
+<h2>Tus datos son tuyos</h2>
+<p>Puedes exportar todo en cualquier momento (Rutinas › Respaldo) y borrarlo eliminando los datos del sitio en tu navegador o desinstalando la app. No vendemos, compartimos ni analizamos tus datos, y la app no usa publicidad ni rastreadores.</p>
+
+<h2>Contacto</h2>
+<p>Para preguntas sobre esta política, abre un reporte en <a href="https://github.com/simecomf/bitacora-gym/issues" rel="noopener">github.com/simecomf/bitacora-gym/issues</a>.</p>
+<p><a href="./">← Volver a la app</a></p>
+</div>
+</main>
+</body>
+</html>

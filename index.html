@@ -1795,7 +1795,7 @@ function driveCard() {
       <p class="small muted" style="margin:0">Al terminar cada sesión se guarda en el archivo <b>${DRIVE_FILE}</b> de tu Drive. Si Google pide confirmar, verás el botón “Respaldar en Google Drive” en el resumen.</p>
       <button class="btn primary block" data-act="drivenow" ${driveBusy ? 'disabled' : ''}>${driveBusy ? 'Respaldando…' : 'Respaldar ahora'}</button>
       <div class="grid2"><button class="btn" data-act="driverestore">Restaurar desde Drive</button><button class="btn ghost danger" data-act="driveoff">Desconectar</button></div>`
-    : `<p class="small muted" style="margin:0">Guarda tu respaldo automáticamente en tu Google Drive al terminar cada sesión. La app solo puede ver el archivo que ella crea.</p>
+    : `<p class="small muted" style="margin:0">Guarda tu respaldo automáticamente en tu Google Drive al terminar cada sesión. La app solo puede ver el archivo que ella crea. <a href="privacidad.html" style="color:var(--p-blue)">Privacidad</a></p>
       <button class="btn primary block" data-act="driveconnect" ${driveBusy ? 'disabled' : ''}>Conectar Google Drive</button>
       <button class="btn block" data-act="driverestore">Restaurar desde Drive</button>`}</div>`;
 }
