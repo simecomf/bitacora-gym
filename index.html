@@ -44,6 +44,7 @@ button{cursor:pointer}
 .brand{font-family:var(--f-display);font-weight:700;font-size:22px;letter-spacing:.02em;text-transform:uppercase;display:flex;align-items:center;gap:8px}
 .plates{display:flex;gap:3px}
 .plates i{width:6px;height:18px;border-radius:2px;display:block}
+.logo{width:28px;height:28px;border-radius:7px;display:block;flex:none}
 .top-meta{font-size:13px;color:var(--muted)}
 main{max-width:560px;margin:0 auto;padding:16px 16px 150px;display:flex;flex-direction:column;gap:16px}
 
@@ -177,7 +178,7 @@ td.r,th.r{text-align:right}
 
 .banner{border:1px solid var(--line);background:var(--surface-2);border-radius:var(--r);padding:12px 14px;font-size:14px}
 .empty{text-align:center;padding:28px 16px;display:grid;gap:8px;justify-items:center}
-.empty .plates i{height:28px;width:9px}
+.empty .logo{width:56px;height:56px;border-radius:14px}
 
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom,0px));z-index:9;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:600;font-size:15px;max-width:calc(100% - 32px);text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.25)}
 .toast.gold{background:var(--gold);color:#fff}
@@ -282,7 +283,7 @@ details.pk summary,details.howto summary{cursor:pointer;font-weight:600;color:va
 </style>
 
 <header class="top"><div class="top-in">
-  <div class="brand"><span class="plates" aria-hidden="true"><i style="background:var(--p-red)"></i><i style="background:var(--p-blue)"></i><i style="background:var(--p-yellow)"></i><i style="background:var(--p-green)"></i></span>Bitácora</div>
+  <div class="brand"><img class="logo" src="icons/icon-192.png" alt="" aria-hidden="true">Bitácora</div>
   <div class="top-meta" id="topMeta"></div>
 </div></header>
 <main id="view"></main>
@@ -646,7 +647,7 @@ function renderTabs() {
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (!b) return; S.tab = b.dataset.tab; S.editDay = null; render(); window.scrollTo(0, 0); });
 
 function emptyBlock(title, body) {
-  return `<div class="card empty"><span class="plates" aria-hidden="true"><i style="background:var(--p-red)"></i><i style="background:var(--p-blue)"></i><i style="background:var(--p-yellow)"></i><i style="background:var(--p-green)"></i></span><h2>${title}</h2><p class="muted small" style="margin:0;max-width:40ch">${body}</p></div>`;
+  return `<div class="card empty"><img class="logo" src="icons/icon-192.png" alt="" aria-hidden="true"><h2>${title}</h2><p class="muted small" style="margin:0;max-width:40ch">${body}</p></div>`;
 }
 
 /* ---------- render ---------- */

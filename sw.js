@@ -1,6 +1,6 @@
 /* Service worker: guarda la app y la librería XLSX para usarla sin internet.
    Sube VERSION cuando cambies algún archivo para que los teléfonos se actualicen. */
-const VERSION = 'v6';
+const VERSION = 'v7';
 const APP = 'bitacora-app-' + VERSION;
 const RUNTIME = 'bitacora-runtime';
 const XLSX = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
