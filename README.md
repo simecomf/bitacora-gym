@@ -43,7 +43,7 @@ personalizadas. Las medidas corporales y notas se incluyen solo si se marcan.
 Se leen todas las sesiones guardadas, aunque no estén entre las últimas 1000 de la vista.
 
 - **Resumen:** vista previa, copiar, enlace a WhatsApp con mensaje preparado y menú nativo de compartir cuando el navegador lo admite. En WhatsApp el usuario elige el destinatario y confirma el envío.
-- **Informe para IA:** todas las series marcadas, su tipo, unidad y RPE, cardio y datos opcionales. Se puede copiar, descargar como TXT/JSON o compartir un TXT cuando el dispositivo lo permite. Incluye una petición de análisis y un enlace para abrir ChatGPT; el usuario pega o adjunta el informe en su mensaje.
+- **Informe para IA:** todas las series marcadas, su tipo, unidad y RPE, cardio y datos opcionales. Se puede copiar, descargar como TXT/JSON o compartir un TXT cuando el dispositivo lo permite. Incluye una petición de análisis. Con **Compartir…** el usuario elige ChatGPT u otra app disponible; también puede pegar o adjuntar el informe en su mensaje.
 
 Los informes no incluyen fotos, ajustes de cuenta ni datos de conexión. No son
 respaldos para restaurar. Se generan localmente; no requieren una API de IA ni
