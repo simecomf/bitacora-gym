@@ -267,6 +267,8 @@ details.pk summary,details.howto summary{cursor:pointer;font-weight:600;color:va
 .ref-imgs figure{margin:0;display:grid;gap:4px}
 .ref-imgs img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;background:#fff;border:1px solid var(--line)}
 .ref-imgs figcaption{font-size:12px;color:var(--muted);text-align:center}
+.demo-stage{display:grid;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;min-height:200px}
+.demo-stage img{grid-area:1/1;width:100%;max-height:420px;aspect-ratio:1;object-fit:contain}
 .pick.has-img{flex-direction:row;align-items:center;gap:10px}
 .pick.has-img img{width:52px;height:52px;object-fit:cover;border-radius:8px;flex:none;background:#fff}
 .cat-item{display:grid;gap:6px;padding-bottom:10px;border-bottom:1px solid var(--line)}
@@ -303,6 +305,7 @@ details.pk summary,details.howto summary{cursor:pointer;font-weight:600;color:va
 
 <script src="localdb.js"></script>
 <script src="catalog.js"></script>
+<script src="session-model.js"></script>
 <script>
 (() => {
 const $ = (s, r = document) => r.querySelector(s);
@@ -329,7 +332,14 @@ const PLATES_ALL = { kg: [25, 20, 15, 10, 5, 2.5, 2, 1.25, 1, 0.5], lb: [55, 45,
 const STYPES = ['n', 'w', 'f', 'd'];
 const STYPE_LBL = { w: 'C', f: 'F', d: 'D' };
 const STYPE_NAME = { n: 'Normal', w: 'Calentamiento', f: 'Al fallo', d: 'Drop set' };
-const BODY_FIELDS = [['weight', 'Peso', 'bw'], ['fat', 'Grasa', '%'], ['waist', 'Cintura', 'cm'], ['hip', 'Cadera', 'cm'], ['chest', 'Pecho', 'cm'], ['shoulders', 'Hombros', 'cm'], ['neck', 'Cuello', 'cm'], ['arm', 'Brazo', 'cm'], ['forearm', 'Antebrazo', 'cm'], ['thigh', 'Muslo', 'cm'], ['calf', 'Pantorrilla', 'cm']];
+const BODY_MAIN = [['weight', 'Peso', 'bw'], ['fat', 'Grasa', '%'], ['waist', 'Cintura', 'cm'], ['hip', 'Cadera', 'cm'], ['chest', 'Pecho', 'cm'], ['shoulders', 'Hombros', 'cm'], ['neck', 'Cuello', 'cm']];
+const BODY_LIMBS = [['arm', 'Brazo'], ['forearm', 'Antebrazo'], ['thigh', 'Muslo'], ['calf', 'Pantorrilla']];
+const BODY_SIDES = BODY_LIMBS.flatMap(([k, l]) => [[k + 'Left', l + (k === 'calf' ? ' izquierda' : ' izquierdo'), 'cm'], [k + 'Right', l + (k === 'calf' ? ' derecha' : ' derecho'), 'cm']]);
+const BODY_LEGACY = BODY_LIMBS.map(([k, l]) => [k, l + ' (sin lado)', 'cm']);
+const BODY_FIELDS = [...BODY_MAIN, ...BODY_SIDES, ...BODY_LEGACY];
+const CARDIO_TYPES = [['walk', 'Caminadora / caminata'], ['run', 'Carrera'], ['bike', 'Bicicleta'], ['elliptical', 'Elíptica'], ['row', 'Remo'], ['stairs', 'Escaladora'], ['other', 'Otro cardio']];
+const cardioName = c => (CARDIO_TYPES.find(x => x[0] === c.type) || CARDIO_TYPES[0])[1];
+const cardioRecords = () => doneSessions().flatMap(s => SessionModel.cardioBlocks(s).filter(c => num(c.min) > 0).map(c => ({ ...s, cardio: c })));
 const EQUIP = [['barra', 'Barra'], ['mancuerna', 'Mancuernas'], ['maquina', 'Máquina'], ['polea', 'Polea'], ['smith', 'Smith'], ['corporal', 'Peso corporal'], ['banda', 'Banda'], ['otro', 'Otro']];
 const eqLabel = k => (EQUIP.find(x => x[0] === k) || ['', ''])[1];
 const RESTS = [45, 60, 90, 120, 150, 180, 240, 300];
@@ -535,7 +545,7 @@ function muscleSets(sessions) {
 function sessTotals(s) {
   let vol = 0, n = 0, prs = 0;
   for (const en of (s.entries || [])) { const st = entryStats(en, eu(en, s)); if (st) { vol += st.vol; n += st.n; } prs += (en.sets || []).filter(x => x.pr && x.done).length; }
-  return { vol, n, prs, min: s.endedAt ? (s.endedAt - s.startedAt) / 60000 : 0, cardio: s.kind === 'cardio' ? (num(s.cardio && s.cardio.min) || 0) : 0 };
+  return { vol, n, prs, min: s.endedAt ? (s.endedAt - s.startedAt) / 60000 : 0, cardio: SessionModel.cardioTotal(s) };
 }
 const deltaTxt = (d, unit, dec = 0) => d === 0 ? '<span class="muted">=</span>' : `<span class="${d > 0 ? 'pos' : 'neg'}">${d > 0 ? '+' : '−'}${fmtN(Math.abs(d), dec)}${unit ? ' ' + unit : ''}</span>`;
 
@@ -543,6 +553,23 @@ const deltaTxt = (d, unit, dec = 0) => d === 0 ? '<span class="muted">=</span>' 
 let saveTimer = null, saving = Promise.resolve(); const DISCARDED = new Set();
 // Each open window has its own id, so a window never overwrites what another one registered.
 const CLIENT = Math.random().toString(36).slice(2, 10); let dirty = false;
+let lastRevision = 0;
+const revision = () => ({ at: lastRevision = Math.max(Date.now(), lastRevision + 1), by: CLIENT });
+const newEntryId = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : CLIENT + '-' + revision().at;
+function saveEntryOrder() {
+  S.active.entries.forEach(en => { en.entryId = SessionModel.key(en); });
+  S.active.entryOrder = { ...revision(), ids: S.active.entries.map(SessionModel.key) };
+}
+async function removeSessionExercise(ei) {
+  const a = S.active, en = a && a.entries[ei]; if (!en) return;
+  if (en.sets.some(s => s.done || num(s.w) !== null || num(s.r) !== null)) {
+    const ok = await confirmBox({ title: 'Quitar ' + en.name + ' de hoy', body: 'Se quitará solo de esta sesión, junto con sus series. La rutina habitual conserva el ejercicio.' }, 'Quitar de hoy', true);
+    if (!ok || S.active !== a || a.entries[ei] !== en) return;
+  }
+  a.removedEntries = { ...a.removedEntries, [SessionModel.key(en)]: true };
+  a.entries.splice(ei, 1); saveEntryOrder(); queueSave(); closeModal(); render();
+  toast('Ejercicio quitado solo de hoy');
+}
 // Copy of the session in progress kept on this phone, so a reload or a stale copy can never erase sets.
 const BK = 'bitacora-active';
 function backup() { try { if (S.active) localStorage.setItem(BK, JSON.stringify(S.active)); } catch (e) {} }
@@ -562,19 +589,13 @@ function flushSave() {
 const doneN = en => (en.sets || []).filter(x => x.done).length;
 const doneTot = s => (s.entries || []).reduce((n, en) => n + doneN(en), 0);
 function mergeActive(local, remote, preferLocal) {
-  const out = clone(preferLocal ? local : remote); const other = preferLocal ? remote : local;
-  out.entries = out.entries || [];
-  const byId = new Map(out.entries.map(en => [en.exId, en]));
-  for (const en of (other.entries || [])) {
-    const mine = byId.get(en.exId);
-    if (!mine) { out.entries.push(clone(en)); continue; }
-    if (doneN(en) > doneN(mine)) Object.assign(mine, clone(en));
-  }
-  if (!out.notes && other.notes) out.notes = other.notes;
-  const oc = out.cardio || (out.cardio = {}), xc = other.cardio || {};
-  for (const k of ['min', 'speed', 'incline']) if (num(oc[k]) === null && num(xc[k]) !== null) oc[k] = xc[k];
-  out.startedAt = Math.min(local.startedAt || Infinity, remote.startedAt || Infinity);
-  return out;
+  return SessionModel.merge(local, remote, preferLocal);
+}
+function sessionContentChanged(a, b) {
+  return ['entries', 'cardioBlocks', 'removedEntries', 'removedCardio', 'entryOrder'].some(k => {
+    const fallback = k === 'entries' || k === 'cardioBlocks' ? [] : k === 'entryOrder' ? null : {};
+    return JSON.stringify(a[k] ?? fallback) !== JSON.stringify(b[k] ?? fallback);
+  });
 }
 function dropActive(msg) { clearBackup(); S.active = null; S.rest = null; $('#restbar').hidden = true; try { S.wake && S.wake.release(); } catch (e) {} if (msg) toast(msg); render(); }
 function syncActive(remote, definitive) {
@@ -588,13 +609,13 @@ function syncActive(remote, definitive) {
     const m = mergeActive(a, remote, true);
     m.status = 'done'; m.endedAt = remote.endedAt || Date.now();
     m.entries = m.entries.map(en => ({ ...en, sets: en.sets.filter(x => x.done) })).filter(en => en.sets.length);
-    if (doneTot(m) > doneTot(remote)) { m._by = CLIENT; m._at = Date.now(); write('sessions/' + m.id, m); dropActive('Sesión guardada desde otra ventana; se añadieron las series de esta.'); }
+    if (sessionContentChanged(m, remote)) { m._by = CLIENT; m._at = Date.now(); write('sessions/' + m.id, m); dropActive('Sesión guardada desde otra ventana; se conservaron los cambios de esta.'); }
     else dropActive('Esta sesión ya se guardó desde otra ventana.');
     return;
   }
   S.active = mergeActive(a, remote, dirty);
   S.active._by = remote._by; S.active._at = remote._at;
-  if (dirty || doneTot(S.active) > doneTot(remote)) queueSave();
+  if (dirty || sessionContentChanged(S.active, remote)) queueSave();
   render();
 }
 async function refreshActive() {
@@ -615,8 +636,9 @@ async function write(path, data) {
 /* ---------- UI bits ---------- */
 let toastT;
 function toast(msg, gold) { const t = $('#toast'); t.textContent = msg; t.className = 'toast' + (gold ? ' gold' : ''); t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, gold ? 3800 : 2800); }
-function modal(html) { $('#modalIn').innerHTML = html; $('#modal').hidden = false; }
-function closeModal() { $('#modal').hidden = true; $('#modalIn').innerHTML = ''; }
+let demoTimer = null;
+function modal(html) { clearInterval(demoTimer); demoTimer = null; $('#modalIn').innerHTML = html; $('#modal').hidden = false; }
+function closeModal() { clearInterval(demoTimer); demoTimer = null; $('#modal').hidden = true; $('#modalIn').innerHTML = ''; }
 function confirmBox(msg, ok, danger) {
   return new Promise(res => {
     modal(`<div><h2>${esc(msg.title)}</h2>${msg.body ? `<p class="muted small" style="margin:6px 0 0">${esc(msg.body)}</p>` : ''}</div>
@@ -804,7 +826,7 @@ function makeEntry(e) {
   const c = coach(e.id, { sets: e.sets, repMin: e.repMin, repMax: e.repMax }, u);
   const n = Math.max(1, deloadOn() ? Math.ceil((e.sets || 1) / 2) : (e.sets || 1));
   for (let i = 0; i < n; i++) sets.push({ w: c && c.w !== null ? c.w : lastW(last, i, u), r: null, done: false });
-  return { exId: e.id, name: e.name, unit: u, group: e.group || '', perSide: !!e.perSide, equip: e.equip || '', target: { sets: e.sets, repMin: e.repMin, repMax: e.repMax }, sets };
+  return { entryId: newEntryId(), exId: e.id, name: e.name, unit: u, group: e.group || '', perSide: !!e.perSide, equip: e.equip || '', target: { sets: e.sets, repMin: e.repMin, repMax: e.repMax }, sets };
 }
 function startSession(dayId) {
   const d = dayById(dayId); if (!d) return;
@@ -812,6 +834,7 @@ function startSession(dayId) {
   const unit = U();
   const entries = (d.exercises || []).map(makeEntry);
   S.active = { id, date: today(), startedAt: Date.now(), endedAt: null, status: 'active', dayId: d.id, dayName: d.name, color: d.color, kind: d.kind || 'pesas', unit, entries, cardio: { min: null, speed: null, incline: null }, notes: '' };
+  if (d.withCardio && d.kind !== 'cardio') S.active.cardioBlocks = [makeCardioBlock()];
   queueSave(true);
   try { navigator.wakeLock && navigator.wakeLock.request('screen').then(l => S.wake = l).catch(() => {}); } catch (e) {}
   render(); window.scrollTo(0, 0);
@@ -824,6 +847,7 @@ function eqOpts(en) {
 }
 async function switchEquip(ei, eq) {
   const en = S.active && S.active.entries[ei]; if (!en || !S.routines) return;
+  en.entryId = SessionModel.key(en);
   const prev = en.exId; const nr = clone(S.routines); const id = idForEquip(nr, baseOf(prev), eq);
   if (JSON.stringify(nr) !== JSON.stringify(S.routines)) { if (!(await write('config/routines', nr))) { render(); return; } S.routines = nr; }
   const def = exInfo(id) || {};
@@ -873,7 +897,7 @@ function openPicker(mode, ei) {
     const ids = new Set(allExercises().map(x => x.id)); const id0 = slug(name); let id = id0, n = 2; while (ids.has(id)) id = id0 + '-' + n++;
     pickEx(mode, ei, { id, name, equip: $('#pk-e').value, group: $('#pk-g').value || '', unit: U(), sets, repMin: ra, repMax: rb }, true);
   };
-  if ($('#pk-rm')) $('#pk-rm').onclick = () => { S.active.entries.splice(ei, 1); queueSave(); closeModal(); render(); toast('Ejercicio quitado de la sesión de hoy'); };
+  if ($('#pk-rm')) $('#pk-rm').onclick = () => removeSessionExercise(ei);
   $('#pk-x').onclick = closeModal;
   $('#pk-cat').onclick = () => { const keep = !!($('#pk-keep') && $('#pk-keep').checked); openCatalog(r => pickEx(mode, ei, r.def, r.isNew, keep), { title: mode === 'swap' ? 'Cambiar ' + cur.name : 'Agregar a ' + a.dayName, group: cur && (exInfo(cur.exId) || {}).group, onCancel: () => openPicker(mode, ei) }); };
 }
@@ -896,11 +920,27 @@ async function pickEx(mode, ei, def, isNew, keepOpt) {
   const en = makeEntry(c);
   if (mode === 'swap') {
     const old = a.entries[ei]; const done = old.sets.filter(x => x.done);
+    a.removedEntries = { ...a.removedEntries, [SessionModel.key(old)]: true };
     if (done.length) en.sets = done.concat(en.sets.slice(Math.min(done.filter(isWork).length, en.sets.length)));
     a.entries[ei] = en;
   } else a.entries.push(en);
+  saveEntryOrder();
   queueSave(); closeModal(); render();
   toast((mode === 'swap' ? 'Cambiado a ' : 'Agregado: ') + c.name + (keep ? ' (también en la rutina)' : ' (solo hoy)'));
+}
+function makeCardioBlock() {
+  return { id: newEntryId(), type: 'walk', position: 'after', min: null, speed: null, incline: null, distance: null, _rev: revision() };
+}
+function renderCardioBlocks(a, position) {
+  return (a.cardioBlocks || []).filter(c => (c.position || 'after') === position).map(c => `<section class="card cardio-form" data-cardio-id="${esc(c.id)}">
+    <div class="spread"><h3>Cardio · ${esc(cardioName(c))}</h3><button class="btn sm ghost danger" data-act="cardioremove" data-id="${esc(c.id)}">Quitar cardio</button></div>
+    <div class="grid2"><label class="field">Actividad<select data-cb="type">${CARDIO_TYPES.map(([k, l]) => `<option value="${k}" ${c.type === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    <label class="field">Ubicación<select data-cb="position"><option value="before" ${position === 'before' ? 'selected' : ''}>Antes de pesas</option><option value="after" ${position === 'after' ? 'selected' : ''}>Después de pesas</option></select></label></div>
+    <div class="grid2">${[['min', 'Minutos *'], ['distance', 'Distancia (km)'], ['speed', 'Velocidad (km/h)'], ['incline', 'Pendiente (%)']].map(([k, l]) => `<label class="field">${l}<input data-cb="${k}" inputmode="decimal" value="${esc(c[k] ?? '')}" placeholder="${k === 'min' ? '20' : 'Opcional'}"></label>`).join('')}</div>
+    <p class="small muted" style="margin:0">Se guarda dentro de este entrenamiento. Solo los minutos son obligatorios.</p></section>`).join('');
+}
+function cardioDetail(s) {
+  return SessionModel.cardioBlocks(s).filter(c => num(c.min) > 0).map(c => `<div class="l"><span>${esc(cardioName(c))}</span><span class="num">${fmtN(num(c.min))} min${num(c.distance) ? ' · ' + fmtN(num(c.distance)) + ' km' : ''}${num(c.speed) ? ' · ' + fmtN(num(c.speed)) + ' km/h' : ''}${num(c.incline) !== null ? ' · ' + fmtN(num(c.incline)) + ' %' : ''}</span></div>`).join('');
 }
 function viewSession() {
   const a = S.active; const d = dayById(a.dayId) || { color: a.color, name: a.dayName };
@@ -938,14 +978,15 @@ function viewSession() {
         <button class="chk" type="button" data-act="check" aria-label="Marcar serie ${si + 1}" aria-pressed="${!!s.done}">${ICON.check}</button></div>`;
     }).join('');
     const hasWarm = en.sets.some(x => x.t === 'w');
-    return `<section class="ex"><div><div class="spread" style="align-items:flex-start"><div class="ex-name">${thumb(en.exId)}<h3>${esc(en.name)}</h3></div><div class="seg useg" role="group" aria-label="Unidad de ${esc(en.name)}">${['kg', 'lb'].map(x => `<button type="button" data-act="eunit" data-ei="${ei}" data-u="${x}" aria-pressed="${u === x}">${x}</button>`).join('')}</div></div><div class="meta">${target({ ...ex, perSide: en.perSide })} · ${lastTxt}</div>
+    return `<section class="ex" data-entry="${esc(SessionModel.key(en))}"><div><div class="spread" style="align-items:flex-start"><div class="ex-name">${thumb(en.exId)}<h3>${esc(en.name)}</h3></div><div class="seg useg" role="group" aria-label="Unidad de ${esc(en.name)}">${['kg', 'lb'].map(x => `<button type="button" data-act="eunit" data-ei="${ei}" data-u="${x}" aria-pressed="${u === x}">${x}</button>`).join('')}</div></div><div class="meta">${target({ ...ex, perSide: en.perSide })} · ${lastTxt}</div>
       <div class="ex-opts"><label class="eq"><select data-eq="${ei}" aria-label="Equipo de ${esc(en.name)}">${eqOpts(en)}</select></label><button type="button" class="chip sm" data-act="erest" data-ei="${ei}" aria-label="Descanso de ${esc(en.name)}">Descanso ${clock(restFor(en.exId) * 1000)}</button><button type="button" class="chip sm" data-act="exswap" data-ei="${ei}">Cambiar</button></div></div>
       ${cc ? `<div class="coach ${cc.kind}"><span>${cc.kind === 'up' ? ICON.up.replace('<svg', '<svg width="14" height="14" style="vertical-align:-2px"') + ' ' : ''}<b>Entrenador:</b> ${esc(cc.txt)}</span>${stl && cc.kind !== 'up' && cc.kind !== 'deload' ? `<small>Sin superar tu mejor marca hace ${stl.weeks} semanas. ${esc(stallTip(en.exId))}</small>` : ''}</div>` : ''}
       <div class="sets"><div class="set-h"><span>#</span><span>Anterior</span><span>${u}</span><span>Reps</span><span></span></div>${rows}</div>
-      <div class="set-actions"><div class="ex-tools"><button class="btn sm" data-act="addset" data-ei="${ei}">+ Serie</button>${hasWarm ? `<button class="btn sm ghost" data-act="rmwarm" data-ei="${ei}">Quitar calent.</button>` : `<button class="btn sm" data-act="warm" data-ei="${ei}">+ Calentamiento</button>`}<button class="btn sm" data-act="plates" data-ei="${ei}">Discos</button></div>${en.sets.length > 1 ? `<button class="btn sm ghost" data-act="delset" data-ei="${ei}">Quitar última</button>` : ''}</div></section>`;
+      <div class="set-actions"><div class="ex-tools"><button class="btn sm" data-act="addset" data-ei="${ei}">+ Serie</button>${hasWarm ? `<button class="btn sm ghost" data-act="rmwarm" data-ei="${ei}">Quitar calent.</button>` : `<button class="btn sm" data-act="warm" data-ei="${ei}">+ Calentamiento</button>`}<button class="btn sm" data-act="plates" data-ei="${ei}">Discos</button></div>${en.sets.length > 1 ? `<button class="btn sm ghost" data-act="delset" data-ei="${ei}">Quitar última</button>` : ''}</div>
+      <div class="row" role="group" aria-label="Orden y opciones de ${esc(en.name)}"><button class="btn sm" data-act="sessionmove" data-ei="${ei}" data-d="-1" ${ei === 0 ? 'disabled' : ''} aria-label="Subir ${esc(en.name)}">↑ Subir</button><button class="btn sm" data-act="sessionmove" data-ei="${ei}" data-d="1" ${ei === a.entries.length - 1 ? 'disabled' : ''} aria-label="Bajar ${esc(en.name)}">↓ Bajar</button><button class="btn sm ghost danger" data-act="sessionremove" data-ei="${ei}">Quitar de hoy</button><button class="btn sm ghost" data-act="eximg" data-ex="${esc(en.exId)}">Ver movimiento</button></div></section>`;
   }).join('');
   const legend = `<p class="legend">Toca el número de una serie para cambiar su tipo: <b style="color:var(--p-blue)">C</b> calentamiento, <b style="color:var(--danger)">F</b> al fallo, <b style="color:var(--gold)">D</b> drop set. El calentamiento no cuenta para récords ni volumen. Al marcar una serie puedes anotar su RPE.</p>`;
-  return head + legend + blocks + `<button class="btn block" data-act="exadd">+ Agregar ejercicio o variante</button>
+  return head + legend + renderCardioBlocks(a, 'before') + blocks + `<button class="btn block" data-act="exadd">+ Agregar ejercicio o variante</button>` + renderCardioBlocks(a, 'after') + `<button class="btn block" data-act="cardioadd">+ Agregar cardio a esta sesión</button>
     <label class="field">Notas de la sesión<textarea id="s-notes" data-notes="1" placeholder="Molestias, energía, cambios de máquina…">${esc(a.notes || '')}</textarea></label>
     <button class="btn primary block" data-act="finish">Terminar sesión</button><button class="btn ghost danger" data-act="discard">Descartar sesión</button>`;
 }
@@ -1062,9 +1103,12 @@ async function finishSession() {
   if (!S.active) return;
   S.active = fromBackup(S.active);
   const a = S.active;
-  const anyDone = a.kind === 'cardio' ? num(a.cardio.min) > 0 : a.entries.some(en => en.sets.some(s => s.done));
+  const invalidCardio = SessionModel.cardioBlocks(a).find(c => !SessionModel.validCardio(c));
+  if (invalidCardio && a.kind !== 'cardio') { toast('Cada bloque de cardio necesita minutos mayores que cero y valores válidos, o quítalo antes de terminar.'); return; }
+  if (invalidCardio && a.kind === 'cardio' && num(a.cardio.min) > 0) { toast('Revisa los valores del cardio: deben ser números válidos, iguales o mayores que cero.'); return; }
+  const anyDone = SessionModel.cardioTotal(a) > 0 || a.entries.some(en => en.sets.some(s => s.done));
   if (!anyDone) {
-    const ok = await confirmBox({ title: 'No hay nada registrado', body: a.kind === 'cardio' ? 'Anota los minutos para guardar la sesión, o descártala.' : 'Marca al menos una serie para guardar la sesión, o descártala.' }, 'Descartar sesión', true);
+    const ok = await confirmBox({ title: 'No hay nada registrado', body: 'Marca al menos una serie o registra minutos de cardio para guardar la sesión, o descártala.' }, 'Descartar sesión', true);
     if (ok) discardSession(true);
     return;
   }
@@ -1075,8 +1119,10 @@ async function finishSession() {
     if (!ok) return;
   }
   a.status = 'done'; a.endedAt = Date.now(); dirty = true;
+  const unfinishedEntries = a.entries;
   if (a.kind !== 'cardio') a.entries = a.entries.map(en => ({ ...en, sets: en.sets.filter(s => s.done) })).filter(en => en.sets.length);
   await flushSave();
+  if (dirty) { a.status = 'active'; a.endedAt = null; a.entries = unfinishedEntries; backup(); render(); return; }
   clearBackup();
   const summary = clone(a);
   S.active = null; S.rest = null; $('#restbar').hidden = true;
@@ -1115,8 +1161,8 @@ function summaryHTML(s) {
       ${k(fmtN(t.min, 0), 'minutos', p ? deltaTxt(Math.round(t.min - p.min), 'min') : undefined)}
       ${k(t.n, 'series de trabajo', p ? deltaTxt(t.n - p.n, '') : undefined)}
       ${k(fmtN(fromKg(t.vol), 0), du + ' volumen', p && p.vol ? deltaTxt(Math.round((t.vol - p.vol) / p.vol * 100), '%') : undefined)}
-      ${k(t.prs, 'récords')}</div>${vs}
-    <div class="tbl-wrap"><table><thead><tr><th>Ejercicio</th><th class="r">Mejor serie</th><th class="r">1RM est. vs antes</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      ${k(t.prs, 'récords')}${t.cardio ? k(fmtN(t.cardio), 'min cardio', p ? deltaTxt(t.cardio - p.cardio, 'min', 1) : undefined) : ''}</div>${vs}
+    ${rows ? `<div class="tbl-wrap"><table><thead><tr><th>Ejercicio</th><th class="r">Mejor serie</th><th class="r">1RM est. vs antes</th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}${t.cardio ? `<div class="daydet">${cardioDetail(s)}</div>` : ''}`;
 }
 function showSummary(s, eyebrow) {
   modal(`<div><span class="eyebrow">${esc(eyebrow || fmtDate(s.date, { weekday: 'long', day: 'numeric', month: 'long' }))}</span><h2>${esc(s.dayName)}</h2></div>${summaryHTML(s)}
@@ -1125,8 +1171,7 @@ function showSummary(s, eyebrow) {
 }
 /* calendar: tap a day to see everything done that day */
 function sessDetail(s) {
-  if (s.kind === 'cardio') { const c = s.cardio || {}; return `<div class="l"><span>Caminadora</span><span class="num">${fmtN(num(c.min) || 0)} min${num(c.speed) ? ' · ' + fmtN(num(c.speed)) + ' km/h' : ''}${num(c.incline) !== null ? ' · ' + fmtN(num(c.incline)) + ' %' : ''}</span></div>`; }
-  return (s.entries || []).map(en => `<div class="l"><span>${esc(en.name)}</span><span class="num">${workSets(en).map(x => setStr(x, eu(en, s), null, true)).join(' · ')} ${eu(en, s)}${warmCount(en) ? ` <span class="muted">(+${warmCount(en)} calent.)</span>` : ''}</span></div>`).join('');
+  return (s.entries || []).map(en => `<div class="l"><span>${esc(en.name)}</span><span class="num">${workSets(en).map(x => setStr(x, eu(en, s), null, true)).join(' · ')} ${eu(en, s)}${warmCount(en) ? ` <span class="muted">(+${warmCount(en)} calent.)</span>` : ''}</span></div>`).join('') + cardioDetail(s);
 }
 function showDay(iso) {
   const ss = doneSessions().filter(x => x.date === iso);
@@ -1172,20 +1217,20 @@ function lineChart(pts, unitLbl, color) {
     ${grid}${area ? `<path d="${area}" fill="url(#ga)"/>` : ''}<path d="${line}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>${dots}${xl}</svg>`;
 }
 function viewProgEx() {
-  const exs = allExercises(); const hasCardio = days().some(d => d.kind === 'cardio');
+  const exs = allExercises(); const hasCardio = days().some(d => d.kind === 'cardio' || d.withCardio) || cardioRecords().length > 0;
   if (!exs.length && !hasCardio) return emptyBlock('Sin ejercicios', 'Carga tus rutinas para ver el progreso.');
   if (!S.progEx) S.progEx = exs[0] ? exs[0].id : 'cardio';
   const chips = exs.map(e => `<button class="chip" data-act="pex" data-ex="${esc(e.id)}" aria-pressed="${S.progEx === e.id}" style="--plate:${plate(e.color)}"><span class="dot"></span>${esc(e.name)}</button>`).join('')
-    + (hasCardio ? `<button class="chip" data-act="pex" data-ex="cardio" aria-pressed="${S.progEx === 'cardio'}" style="--plate:var(--p-grey)"><span class="dot"></span>Caminadora</button>` : '');
+    + (hasCardio ? `<button class="chip" data-act="pex" data-ex="cardio" aria-pressed="${S.progEx === 'cardio'}" style="--plate:var(--p-grey)"><span class="dot"></span>Cardio</button>` : '');
   let body;
   if (S.progEx === 'cardio') {
-    const ss = doneSessions().filter(s => s.kind === 'cardio' && num(s.cardio && s.cardio.min) > 0);
-    if (!ss.length) body = emptyBlock('Aún no hay caminatas', 'Registra tu primera sesión de caminadora y aquí verás cómo crecen los minutos.');
+    const ss = cardioRecords();
+    if (!ss.length) body = emptyBlock('Aún no hay cardio', 'Agrega cardio a un entrenamiento y aquí verás tus registros.');
     else {
       const pts = ss.map(s => ({ label: fmtDate(s.date, { day: 'numeric', month: 'short' }), y: num(s.cardio.min) }));
       body = `<div class="card">${headline(pts, 'min')}${lineChart(pts, 'min', 'var(--p-grey)')}</div>
-      <div class="card"><span class="eyebrow">Últimas caminatas</span><div class="tbl-wrap"><table><thead><tr><th>Fecha</th><th class="r">Min</th><th class="r">km/h</th><th class="r">Pendiente</th></tr></thead><tbody>
-      ${ss.slice(-10).reverse().map(s => `<tr><td>${fmtDate(s.date)}</td><td class="r num">${fmtN(num(s.cardio.min))}</td><td class="r num">${num(s.cardio.speed) ? fmtN(num(s.cardio.speed)) : '—'}</td><td class="r num">${num(s.cardio.incline) !== null ? fmtN(num(s.cardio.incline)) + ' %' : '—'}</td></tr>`).join('')}</tbody></table></div></div>`;
+      <div class="card"><span class="eyebrow">Últimos bloques de cardio</span><p class="small muted" style="margin:0">Minutos por bloque; puede incluir actividades diferentes.</p><div class="tbl-wrap"><table><thead><tr><th>Fecha / actividad</th><th class="r">Min</th><th class="r">km/h</th><th class="r">Pendiente</th></tr></thead><tbody>
+      ${ss.slice(-10).reverse().map(s => `<tr><td>${fmtDate(s.date)}<br><small>${esc(cardioName(s.cardio))}</small></td><td class="r num">${fmtN(num(s.cardio.min))}</td><td class="r num">${num(s.cardio.speed) ? fmtN(num(s.cardio.speed)) : '—'}</td><td class="r num">${num(s.cardio.incline) !== null ? fmtN(num(s.cardio.incline)) + ' %' : '—'}</td></tr>`).join('')}</tbody></table></div></div>`;
     }
   } else {
     const ex = exs.find(e => e.id === S.progEx) || exs[0];
@@ -1246,7 +1291,7 @@ function viewMuscles() {
 function bodyCard() {
   const list = S.body.slice().sort((a, b) => a.date < b.date ? -1 : 1); const last = list[list.length - 1];
   const ago = last ? Math.round((dateOf(today()) - dateOf(last.date)) / 864e5) : null; const due = !last || ago >= 14;
-  const vals = last ? BODY_FIELDS.filter(([k]) => ['weight', 'fat', 'waist', 'arm'].includes(k) && num(last[k]) !== null).map(([k, l]) => l + ' ' + fmtN(bodyVal(last, k)) + ' ' + bodyUnit(k)).join(' · ') : '';
+  const vals = last ? BODY_FIELDS.filter(([k]) => ['weight', 'fat', 'waist', 'armLeft', 'armRight', 'arm'].includes(k) && num(last[k]) !== null).map(([k, l]) => l + ' ' + fmtN(bodyVal(last, k)) + ' ' + bodyUnit(k)).join(' · ') : '';
   const when = !last ? 'Aún no registras medidas' : ago === 0 ? 'Registradas hoy' : 'Última vez hace ' + ago + (ago === 1 ? ' día' : ' días');
   return `<div class="card body-card ${due ? 'due' : ''}"><div class="spread"><div class="stack" style="gap:2px;min-width:0"><span class="eyebrow">Medidas corporales</span><span class="small">${when}${due ? ' · toca medirte' : ''}</span>${vals ? `<span class="small muted num">${vals}</span>` : '<span class="small muted">Peso, grasa y perímetros cada 1–2 semanas</span>'}</div><button class="btn sm ${due ? 'primary' : ''}" data-act="gobody">Registrar</button></div></div>`;
 }
@@ -1256,10 +1301,15 @@ function viewBody() {
   const list = S.body.slice().sort((a, b) => a.date < b.date ? -1 : 1);
   const date = S.bodyDate || today(); const cur = list.find(x => x.date === date) || {};
   const can = S.canWrite !== false;
+  const input = ([k, l]) => { const v = bodyVal(cur, k); return `<label class="field">${l} (${bodyUnit(k)})<input id="b-${k}" data-body="${k}" inputmode="decimal" value="${v === null ? '' : Math.round(v * 10) / 10}"></label>`; };
+  const legacy = BODY_LEGACY.filter(([k]) => num(cur[k]) !== null);
   const form = can ? `<div class="card"><div class="spread"><h2>Registrar</h2><input type="date" id="b-date" value="${date}" max="${today()}" style="height:40px;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);padding:0 8px;color:var(--ink)"></div>
-    <div class="grid2">${BODY_FIELDS.map(([k, l]) => { const v = bodyVal(cur, k); return `<label class="field">${l} (${bodyUnit(k)})<input id="b-${k}" data-body="${k}" inputmode="decimal" value="${v === null ? '' : Math.round(v * 10) / 10}"></label>`; }).join('')}</div>
+    <div class="grid2">${BODY_MAIN.map(input).join('')}</div>
+    <span class="eyebrow">Extremidades · izquierda y derecha</span><div class="grid2">${BODY_SIDES.map(input).join('')}</div>
+    ${legacy.length ? `<span class="eyebrow">Medidas anteriores sin lado</span><div class="grid2">${legacy.map(input).join('')}</div>` : ''}
+    <p class="small muted" style="margin:0">Registra cada extremidad por separado. Las medidas antiguas se conservan como “sin lado”; no se asignan automáticamente a izquierda o derecha.</p>
     <p class="small muted" style="margin:0">Llena solo lo que midas. Para comparar bien, mídete a la misma hora, idealmente en ayunas y antes de entrenar.</p>
-    <details class="howto small muted"><summary>Cómo medir</summary><p>Cinta métrica flexible, ajustada sin apretar la piel, siempre del mismo lado (derecho).</p><p><b>Cintura:</b> a la altura del ombligo, relajado, al final de una exhalación. <b>Cadera:</b> parte más ancha de los glúteos. <b>Pecho:</b> a la altura de los pezones, brazos relajados. <b>Hombros:</b> contorno en la parte más ancha. <b>Cuello:</b> justo debajo de la nuez.</p><p><b>Brazo:</b> parte más ancha del bíceps, contraído. <b>Antebrazo:</b> parte más ancha, brazo extendido. <b>Muslo:</b> parte más ancha, de pie. <b>Pantorrilla:</b> parte más ancha, de pie.</p></details>
+    <details class="howto small muted"><summary>Cómo medir</summary><p>Cinta métrica flexible, ajustada sin apretar la piel. Mide ambos lados por separado y mantén el mismo punto y postura en cada registro.</p><p><b>Cintura:</b> a la altura del ombligo, relajado, al final de una exhalación. <b>Cadera:</b> parte más ancha de los glúteos. <b>Pecho:</b> a la altura de los pezones, brazos relajados. <b>Hombros:</b> contorno en la parte más ancha. <b>Cuello:</b> justo debajo de la nuez.</p><p><b>Brazo:</b> parte más ancha del bíceps, contraído. <b>Antebrazo:</b> parte más ancha, brazo extendido. <b>Muslo:</b> parte más ancha, de pie. <b>Pantorrilla:</b> parte más ancha, de pie.</p></details>
     <button class="btn primary block" data-act="bsave">${cur.date ? 'Actualizar medidas' : 'Guardar medidas'}</button></div>` : '';
   const avail = BODY_FIELDS.filter(([k]) => list.some(e => num(e[k]) !== null));
   if (!avail.length) return form + emptyBlock('Aún no hay medidas', 'Registra tu peso y medidas, por ejemplo una vez por semana, y aquí verás cómo cambian.');
@@ -1292,9 +1342,9 @@ function viewRec() {
       <div class="s">Mejor volumen ${fmtN(fromKg(b.vol.vol, xu), 0)} ${xu} · ${fmtDate(b.vol.date)}</div></div>
       <div><div class="v num">${W(b.e1rm.e1rm, xu)}<span class="s"> ${xu}</span></div><div class="s" style="text-align:right">1RM est.</div></div></div>`;
   }).join('');
-  const cs = doneSessions().filter(s => s.kind === 'cardio' && num(s.cardio && s.cardio.min) > 0);
+  const cs = cardioRecords();
   const longest = cs.reduce((m, s) => !m || num(s.cardio.min) > num(m.cardio.min) ? s : m, null);
-  const cardio = longest ? `<div class="rec"><div><h3>Caminadora</h3><div class="s">Sesión más larga · ${fmtDate(longest.date)}</div></div><div class="v num">${fmtN(num(longest.cardio.min))}<span class="s"> min</span></div></div>` : '';
+  const cardio = longest ? `<div class="rec"><div><h3>Cardio · ${esc(cardioName(longest.cardio))}</h3><div class="s">Bloque más largo · ${fmtDate(longest.date)}</div></div><div class="v num">${fmtN(num(longest.cardio.min))}<span class="s"> min</span></div></div>` : '';
   return `<div class="stack" style="gap:4px"><h1>Récords</h1><p class="muted small" style="margin:0">Tu mejor marca por ejercicio. El número grande es el 1RM estimado.</p></div><div class="card" style="gap:0;padding-block:4px">${rows}${cardio}</div>`;
 }
 
@@ -1322,7 +1372,7 @@ function viewRecap(kind) {
   const st = streaks();
   const k = (v, lbl, d) => `<div><b class="num">${v}</b><span>${lbl}</span>${d !== undefined ? `<em>${d} <span class="muted">vs ${kind === 'week' ? 'sem.' : 'mes'} ant.</span></em>` : ''}</div>`;
   const hm = m => m >= 60 ? Math.floor(m / 60) + ' h ' + pad(Math.round(m % 60)) : Math.round(m) + ' min';
-  const kpis = `<div class="kpis">${k(a.n, 'sesiones', deltaTxt(a.n - p.n, ''))}${k(hm(a.min), 'tiempo total', deltaTxt(Math.round(a.min - p.min), 'min'))}${k(a.sets, 'series de trabajo', deltaTxt(a.sets - p.sets, ''))}${k(fmtN(fromKg(a.vol), 0), U() + ' volumen', p.vol ? deltaTxt(Math.round((a.vol - p.vol) / p.vol * 100), '%') : undefined)}${k(a.prs, 'récords')}${k(fmtN(a.cardio), 'min caminadora', deltaTxt(Math.round(a.cardio - p.cardio), 'min'))}</div>`;
+  const kpis = `<div class="kpis">${k(a.n, 'sesiones', deltaTxt(a.n - p.n, ''))}${k(hm(a.min), 'tiempo total', deltaTxt(Math.round(a.min - p.min), 'min'))}${k(a.sets, 'series de trabajo', deltaTxt(a.sets - p.sets, ''))}${k(fmtN(fromKg(a.vol), 0), U() + ' volumen', p.vol ? deltaTxt(Math.round((a.vol - p.vol) / p.vol * 100), '%') : undefined)}${k(a.prs, 'récords')}${k(fmtN(a.cardio), 'min cardio', deltaTxt(Math.round(a.cardio - p.cardio), 'min'))}</div>`;
   const streak = `<div class="spread"><span class="small">Meta: <b>${st.goal}</b> sesiones por semana</span><span class="row" style="gap:6px">${st.cur ? `<span class="streak">Racha ${st.cur} sem.</span>` : '<span class="small muted">Sin racha activa</span>'}${st.best ? `<span class="small muted">mejor: ${st.best}</span>` : ''}</span></div>`;
   // per-exercise progress inside the period vs everything before it
   const prog = [];
@@ -1351,10 +1401,8 @@ function viewHistList() {
     let vol = 0, n = 0; for (const en of s.entries || []) { const st = entryStats(en, eu(en, s)); if (st) { vol += st.vol; n += st.n; } }
     const stats = s.kind === 'cardio'
       ? `<span>${fmtN(num(s.cardio && s.cardio.min) || 0)} min</span>${num(s.cardio && s.cardio.speed) ? `<span>${fmtN(num(s.cardio.speed))} km/h</span>` : ''}`
-      : `<span>${n} series</span><span>${fmtN(fromKg(vol), 0)} ${U()}</span>`;
-    const body = open ? `<div class="body">${s.kind === 'cardio'
-      ? `<div class="l"><span>Pendiente</span><span>${num(s.cardio.incline) !== null ? fmtN(num(s.cardio.incline)) + ' %' : '—'}</span></div>`
-      : (s.entries || []).map(en => `<div class="l"><span>${esc(en.name)}</span><span class="num">${workSets(en).map(x => setStr(x, eu(en, s), null, true)).join(' · ')} ${eu(en, s)}${warmCount(en) ? ` <span class="muted">(+${warmCount(en)} calent.)</span>` : ''}</span></div>`).join('')}
+      : `<span>${n} series</span><span>${fmtN(fromKg(vol), 0)} ${U()}</span>${SessionModel.cardioTotal(s) ? `<span>${fmtN(SessionModel.cardioTotal(s))} min cardio</span>` : ''}`;
+    const body = open ? `<div class="body">${sessDetail(s)}
       ${s.notes ? `<p class="small muted" style="margin:0">${esc(s.notes)}</p>` : ''}
       <div class="row" style="justify-content:flex-end"><button class="btn sm" data-act="sumry" data-id="${esc(s.id)}">Ver resumen</button>${S.canWrite !== false ? `<button class="btn sm ghost danger" data-act="delsess" data-id="${esc(s.id)}">Eliminar sesión</button>` : ''}</div></div>` : '';
     return `<div class="hist" style="--plate:${plate(d.color || s.color)}"><button data-act="hopen" data-id="${esc(s.id)}" aria-expanded="${open}"><span class="dot"></span><span style="min-width:0"><b>${esc(s.dayName)}</b><div class="stats"><span>${fmtDate(s.date)}</span><span>${s.endedAt ? dur(s.endedAt - s.startedAt) : ''}</span>${stats}</div></span><span class="muted">${open ? '−' : '+'}</span></button>${body}</div>`;
@@ -1412,6 +1460,7 @@ function viewEditor() {
     <div class="stack" style="gap:6px"><span class="small muted">Día de la semana</span><div class="chips" style="flex-wrap:wrap">${dowChips}</div><span class="small muted">El día que elijas aparece en Hoy como “Hoy toca”. Cualquier día puedes empezarlo igual desde “Otra sesión”.</span></div>
     <div class="stack" style="gap:6px"><span class="small muted">Color</span><div class="chips" style="flex-wrap:wrap">${colorChips}</div></div>
     ${d.kind === 'cardio' ? '' : `<span class="eyebrow">Ejercicios</span><div>${items}</div><button class="btn sm" data-act="addex">+ Agregar ejercicio</button>
+    <label class="chk-line"><input type="checkbox" data-edd="withCardio" ${d.withCardio ? 'checked' : ''}> Incluir un bloque de cardio en cada sesión de este día</label>
     <p class="small muted" style="margin:0">Cambiar el nombre de un ejercicio conserva su historial. En “Equipo” pon con qué lo has hecho hasta ahora; si luego lo cambias (por ejemplo de barra a mancuernas), la app lo trata como una variante con su propio historial y récords.</p>`}
     <div class="row" style="justify-content:flex-end">${isNew ? '' : '<button class="btn ghost danger" data-act="eddel" style="margin-right:auto">Eliminar día</button>'}<button class="btn ghost" data-act="edcancel">Cancelar</button><button class="btn primary" data-act="edsave">${isNew ? 'Crear día' : 'Guardar cambios'}</button></div></div>`;
 }
@@ -1447,7 +1496,7 @@ function exImg(exId) {
 }
 function thumb(exId, sm) {
   const im = exImg(exId); const src = im ? (im.own || imgUrl(im.db)) : '';
-  return `<button type="button" class="thumb ${sm ? 'sm' : ''} ${src ? '' : 'empty'}" data-act="eximg" data-ex="${esc(exId)}" aria-label="${src ? 'Ver imagen del ejercicio' : 'Agregar imagen al ejercicio'}">${src ? `<img src="${esc(src)}" alt="" loading="lazy">` : ICON.img}</button>`;
+  return `<button type="button" class="thumb ${sm ? 'sm' : ''} ${src ? '' : 'empty'}" data-act="eximg" data-ex="${esc(exId)}" aria-label="${im && im.db ? 'Ver movimiento del ejercicio' : src ? 'Ver imagen del ejercicio' : 'Agregar referencia al ejercicio'}">${src ? `<img src="${esc(src)}" alt="" loading="lazy">` : ICON.img}</button>`;
 }
 async function setExImg(exId, img) {
   const nr = clone(S.routines); let found = false; eachDef(nr, exId, x => { x.img = img; found = true; });
@@ -1458,18 +1507,45 @@ async function setExImg(exId, img) {
 function openExImg(exId) {
   const e = exInfo(exId) || allExercises().find(x => x.id === exId) || { name: '' }; const im = exImg(exId);
   const pics = !im ? `<div class="banner">Este ejercicio aún no tiene imagen. Búscala en el banco de ejercicios o toma una foto de la máquina de tu gym.</div>`
-    : im.own ? `<div class="ref-imgs"><figure><img src="${esc(im.own)}" alt="Tu foto de ${esc(e.name)}"><figcaption>Tu foto</figcaption></figure></div>`
-    : `<div class="ref-imgs"><figure><img src="${imgUrl(im.db, 0)}" alt="${esc(e.name)}: posición inicial"><figcaption>Inicio</figcaption></figure><figure><img src="${imgUrl(im.db, 1)}" alt="${esc(e.name)}: posición final"><figcaption>Final</figcaption></figure></div><p class="small muted" style="margin:0">Imagen de referencia: free-exercise-db (dominio público). Puede no ser idéntica a la máquina de tu gym.</p>`;
+    : im.own ? `<div class="ref-imgs"><figure><img src="${esc(im.own)}" alt="Tu foto de ${esc(e.name)}"><figcaption>Tu foto</figcaption></figure></div><p class="small muted" style="margin:0">Para ver la secuencia, busca una referencia del banco de ejercicios. Tu foto es una imagen fija.</p>`
+    : `<div id="exerciseDemo" class="stack"><div class="demo-stage">${[0, 1].map(n => `<img data-frame="${n}" src="${imgUrl(im.db, n)}" alt="${esc(e.name)}: ${n ? 'posición final' : 'posición inicial'}" ${n ? 'hidden' : ''}>`).join('')}</div>
+      <div class="spread"><span id="demoPosition" class="small muted">Cargando posiciones…</span><button class="btn sm" id="demoPlay" disabled>Reproducir</button></div>
+      <div class="row"><button class="btn sm" id="demoStep" disabled>Siguiente posición</button><label class="field small">Ritmo<select id="demoSpeed"><option value="1500">Lento</option><option value="900" selected>Normal</option><option value="600">Rápido</option></select></label></div></div>
+      <p id="demoError" class="banner" hidden>No se pudieron cargar ambas posiciones. Conéctate a internet y vuelve a abrir la referencia; después de cargarla quedará disponible sin conexión.</p>
+      <p class="small muted" style="margin:0">Secuencia animada de dos posiciones, sin pasos intermedios. No es un video continuo de la técnica. Referencias de <a href="https://github.com/yuhonas/free-exercise-db" target="_blank" rel="noopener">free-exercise-db</a> (dominio público); la máquina puede variar.</p>`;
   const ci = catInfo(exId); const why = ci ? `<p class="small" style="margin:0"><b>Por qué:</b> ${esc(ci.item[6])} ${ci.item[7] ? refLink(ci.item[7]) : ''}</p>` : '';
-  modal(`<div><span class="eyebrow">Imagen de referencia</span><h2>${esc(e.name)}</h2></div>${pics}${why}
+  modal(`<div><span class="eyebrow">Movimiento de referencia</span><h2>${esc(e.name)}</h2></div>${pics}${why}
     <div class="grid2"><button type="button" class="btn" id="xiFind">Buscar imagen</button><button type="button" class="btn" id="xiPhoto">Tomar o subir foto</button></div>
     <div class="row">${im ? '<button type="button" class="btn ghost danger" id="xiNone">Quitar imagen</button>' : ''}<button type="button" class="btn primary" id="xiOk">Listo</button></div>`);
   $('#xiOk').onclick = closeModal;
+  if (im && im.db) startExerciseDemo();
   $('#xiFind').onclick = () => openImgSearch(exId);
   $('#xiPhoto').onclick = () => { S.photoFor = exId; const f = $('#photoFile'); f.value = ''; f.click(); };
   if ($('#xiNone')) $('#xiNone').onclick = async () => {
     if (await setExImg(exId, 'none')) { if (S.photos[exId]) { try { await S.db.doc('photos/' + exId).delete(); } catch (er) {} } closeModal(); render(); toast('Imagen quitada'); }
   };
+}
+function startExerciseDemo() {
+  const box = $('#exerciseDemo'), frames = [...box.querySelectorAll('[data-frame]')];
+  const play = $('#demoPlay'), step = $('#demoStep'), label = $('#demoPosition');
+  let frame = 0, playing = false;
+  const draw = () => { frames.forEach((im, i) => { im.hidden = i !== frame; }); label.textContent = frame ? '2 / 2 · Posición final' : '1 / 2 · Posición inicial'; };
+  const setPlaying = value => {
+    clearInterval(demoTimer); demoTimer = null; playing = value;
+    play.textContent = playing ? 'Pausar' : 'Reproducir'; play.setAttribute('aria-pressed', String(playing));
+    if (playing) demoTimer = setInterval(() => { if (!document.hidden) { frame = 1 - frame; draw(); } }, +$('#demoSpeed').value);
+  };
+  play.onclick = () => setPlaying(!playing);
+  step.onclick = () => { setPlaying(false); frame = 1 - frame; draw(); };
+  $('#demoSpeed').onchange = () => { if (playing) setPlaying(true); };
+  Promise.all(frames.map(im => new Promise((resolve, reject) => {
+    if (im.complete) { im.naturalWidth ? resolve() : reject(); return; }
+    im.onload = resolve; im.onerror = reject;
+  }))).then(() => {
+    if (!box.isConnected) return;
+    play.disabled = step.disabled = false; draw();
+    setPlaying(!window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }).catch(() => { if (box.isConnected) { label.textContent = 'Referencia no disponible'; $('#demoError').hidden = false; } });
 }
 /* search the image bank; Spanish words are translated to the English names it uses */
 let imgDb = null;
@@ -1611,11 +1687,11 @@ function buildWorkbook(X) {
     });
   }
   // Sesiones
-  const ses = [['Fecha', 'Día', 'Sesión', 'Inicio', 'Duración (min)', 'Ejercicios', 'Series', 'Volumen (kg)', 'Caminadora (min)', 'Velocidad (km/h)', 'Pendiente (%)', 'Notas']];
+  const ses = [['Fecha', 'Día', 'Sesión', 'Inicio', 'Duración (min)', 'Ejercicios', 'Series', 'Volumen (kg)', 'Cardio total (min)', 'Velocidad (km/h; bloque único)', 'Pendiente (%; bloque único)', 'Notas']];
   for (const s of done) {
     let vol = 0, n = 0; for (const en of (s.entries || [])) { const st = entryStats(en, eu(en, s)); if (st) { vol += st.vol; n += st.n; } }
-    const c = s.cardio || {}; const st0 = new Date(s.startedAt);
-    ses.push([D(s.date), DOW[D(s.date).getDay()], s.dayName, pad(st0.getHours()) + ':' + pad(st0.getMinutes()), s.endedAt ? Math.round((s.endedAt - s.startedAt) / 60000) : '', (s.entries || []).length || '', n || '', vol ? Math.round(vol) : '', num(c.min) ?? '', num(c.speed) ?? '', num(c.incline) ?? '', s.notes || '']);
+    const blocks = SessionModel.cardioBlocks(s); const c = blocks.length === 1 ? blocks[0] : {}; const st0 = new Date(s.startedAt);
+    ses.push([D(s.date), DOW[D(s.date).getDay()], s.dayName, pad(st0.getHours()) + ':' + pad(st0.getMinutes()), s.endedAt ? Math.round((s.endedAt - s.startedAt) / 60000) : '', (s.entries || []).length || '', n || '', vol ? Math.round(vol) : '', SessionModel.cardioTotal(s) || '', num(c.speed) ?? '', num(c.incline) ?? '', s.notes || '']);
   }
   // Récords
   const rec = [['Ejercicio', 'Unidad', 'Peso máx.', 'Reps con ese peso', 'Fecha', '1RM est.', 'Fecha', 'Mejor volumen', 'Fecha', 'Máx. reps en una serie', 'Sesiones registradas']];
@@ -1637,6 +1713,9 @@ function buildWorkbook(X) {
   const add = (rows, name, widths) => { const ws = X.utils.aoa_to_sheet(rows, { dateNF: 'yyyy-mm-dd' }); ws['!cols'] = widths.map(w => ({ wch: w })); if (rows.length > 1) ws['!autofilter'] = { ref: X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length - 1, c: rows[0].length - 1 } }) }; X.utils.book_append_sheet(wb, ws, name); };
   add(series, 'Series', [11, 5, 16, 34, 13, 13, 13, 6, 14, 8, 7, 6, 6, 10, 13, 13, 8]);
   add(ses, 'Sesiones', [11, 5, 16, 7, 14, 10, 7, 13, 16, 16, 13, 40]);
+  const cardioRows = [['Fecha', 'Sesión', 'Actividad', 'Ubicación', 'Minutos', 'Distancia (km)', 'Velocidad (km/h)', 'Pendiente (%)']];
+  for (const s of done) for (const c of SessionModel.cardioBlocks(s)) if (num(c.min) > 0) cardioRows.push([D(s.date), s.dayName, cardioName(c), s.kind === 'cardio' ? 'Solo cardio' : c.position === 'before' ? 'Antes de pesas' : 'Después de pesas', num(c.min), num(c.distance) ?? '', num(c.speed) ?? '', num(c.incline) ?? '']);
+  add(cardioRows, 'Cardio', [11, 22, 26, 20, 10, 16, 18, 15]);
   add(rec, 'Récords', [34, 7, 10, 16, 11, 9, 11, 14, 11, 20, 20]);
   add(rut, 'Rutina', [5, 18, 40, 34, 13, 7, 9, 9, 7, 10, 13, 13, 12]);
   const body = [['Fecha', ...BODY_FIELDS.map(([k, l, u]) => l + ' (' + (u === 'bw' ? 'kg' : u) + ')')]];
@@ -1822,6 +1901,26 @@ $('#view').addEventListener('click', async e => {
   else if (act === 'erest') openRest(+b.dataset.ei);
   else if (act === 'exswap') openPicker('swap', +b.dataset.ei);
   else if (act === 'exadd') openPicker('add');
+  else if (act === 'sessionremove') await removeSessionExercise(+b.dataset.ei);
+  else if (act === 'sessionmove') {
+    const i = +b.dataset.ei, j = i + +b.dataset.d, entries = S.active.entries;
+    if (j < 0 || j >= entries.length) return;
+    [entries[i], entries[j]] = [entries[j], entries[i]]; saveEntryOrder(); queueSave(); render();
+    const section = [...document.querySelectorAll('[data-entry]')].find(el => el.dataset.entry === SessionModel.key(entries[j]));
+    section?.querySelector(`[data-act="sessionmove"][data-d="${b.dataset.d}"]`)?.focus({ preventScroll: true });
+    section?.scrollIntoView({ block: 'nearest', behavior: 'instant' }); toast('Orden cambiado solo para hoy');
+  }
+  else if (act === 'cardioadd') {
+    S.active.cardioBlocks = (S.active.cardioBlocks || []).concat([makeCardioBlock()]); queueSave(); render();
+    const fields = document.querySelectorAll('[data-cardio-id] [data-cb="min"]'); fields[fields.length - 1]?.focus();
+  }
+  else if (act === 'cardioremove') {
+    const a = S.active, block = (a.cardioBlocks || []).find(c => c.id === b.dataset.id); if (!block) return;
+    if (['min', 'distance', 'speed', 'incline'].some(k => num(block[k]) !== null) && !(await confirmBox({ title: 'Quitar cardio de hoy', body: 'Se quitará este bloque y sus datos de la sesión actual.' }, 'Quitar cardio', true))) return;
+    if (S.active !== a) return;
+    a.removedCardio = { ...a.removedCardio, [block.id]: true };
+    a.cardioBlocks = a.cardioBlocks.filter(c => c.id !== block.id); queueSave(); render();
+  }
   else if (act === 'gobody') { S.tab = 'prog'; S.progView = 'body'; render(); window.scrollTo(0, 0); }
   else if (act === 'addset') { const en = S.active.entries[+b.dataset.ei]; const l = en.sets[en.sets.length - 1]; en.sets.push({ w: l ? l.w : null, r: null, done: false }); queueSave(); render(); }
   else if (act === 'delset') { const en = S.active.entries[+b.dataset.ei]; if (en.sets.length > 1) en.sets.pop(); queueSave(); render(); }
@@ -1855,7 +1954,7 @@ $('#view').addEventListener('click', async e => {
   else if (act === 'bsave') {
     const date = ($('#b-date') && $('#b-date').value) || today(); const doc = { date };
     let any = false;
-    for (const [k] of BODY_FIELDS) { const v = num($('#b-' + k).value); if (v !== null && v > 0) { doc[k] = k === 'weight' ? Math.round(toKg(v, U()) * 100) / 100 : v; any = true; } }
+    for (const [k] of BODY_FIELDS) { const input = $('#b-' + k); if (!input) continue; const v = num(input.value); if (v !== null && v > 0) { doc[k] = k === 'weight' ? Math.round(toKg(v, U()) * 100) / 100 : v; any = true; } }
     if (!any) { toast('Anota al menos una medida.'); return; }
     if (await write('body/' + date, doc)) { S.body = S.body.filter(x => x.date !== date).concat([doc]); S.bodyDate = null; toast('Medidas guardadas'); render(); }
   }
@@ -1944,14 +2043,22 @@ $('#modalIn').addEventListener('click', async e => {
 $('#view').addEventListener('input', e => {
   const t = e.target;
   if (t.dataset.f && S.active) { const r = t.closest('.set'); const s = S.active.entries[+r.dataset.ei].sets[+r.dataset.si]; s[t.dataset.f] = num(t.value); queueSave(); }
+  else if (t.dataset.cb && !['type', 'position'].includes(t.dataset.cb) && S.active) {
+    const c = S.active.cardioBlocks.find(c => c.id === t.closest('[data-cardio-id]').dataset.cardioId);
+    const value = Number(t.value.replace(',', '.')); c[t.dataset.cb] = t.value.trim() === '' ? null : Number.isFinite(value) ? value : t.value; c._rev = revision(); queueSave();
+  }
   else if (t.dataset.c && S.active) { S.active.cardio[t.dataset.c] = num(t.value); queueSave(); }
   else if (t.dataset.notes && S.active) { S.active.notes = t.value; queueSave(); }
   else if (t.dataset.ed && S.editDraft) { const i = +t.closest('.ed-item').dataset.i; S.editDraft.exercises[i][t.dataset.ed] = t.dataset.ed === 'name' ? t.value : t.value; }
-  else if (t.dataset.edd && S.editDraft) { S.editDraft[t.dataset.edd] = t.value; }
+  else if (t.dataset.edd && S.editDraft) { S.editDraft[t.dataset.edd] = t.type === 'checkbox' ? t.checked : t.value; }
 });
 $('#view').addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'b-date') { S.bodyDate = t.value || null; render(); return; }
+  if (t.dataset.cb && ['type', 'position'].includes(t.dataset.cb) && S.active) {
+    const c = S.active.cardioBlocks.find(c => c.id === t.closest('[data-cardio-id]').dataset.cardioId);
+    c[t.dataset.cb] = t.value; c._rev = revision(); queueSave(); render(); return;
+  }
   if (t.dataset.eq !== undefined && S.active) { switchEquip(+t.dataset.eq, t.value); return; }
   if (t.dataset.rpe && S.active) { const r = t.closest('.set'); const s = S.active.entries[+r.dataset.ei].sets[+r.dataset.si]; const v = num(t.value); if (v) s.rpe = v; else delete s.rpe; queueSave(); }
 });
@@ -1978,7 +2085,7 @@ async function boot() {
   db.collection('sessions').orderBy('startedAt', 'desc').limit(1000).onSnapshot(q => {
     S.sessions = q.docs.map(d => ({ id: d.id, ...d.data() }));
     S.loaded.sessions = true;
-    if (!S.active) { const a = S.sessions.find(x => x.status === 'active' && !DISCARDED.has(x.id)); if (a) { S.active = fromBackup(clone(a)); S.activeSeen = a.id; if (doneTot(S.active) > doneTot(a)) queueSave(); } }
+    if (!S.active) { const a = S.sessions.find(x => x.status === 'active' && !DISCARDED.has(x.id)); if (a) { S.active = fromBackup(clone(a)); S.activeSeen = a.id; if (sessionContentChanged(S.active, a)) queueSave(); } }
     else syncActive(S.sessions.find(x => x.id === S.active.id), !(q.metadata && (q.metadata.fromCache || q.metadata.hasPendingWrites)));
     softRender();
   }, onErr);
