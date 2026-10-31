@@ -64,12 +64,12 @@ test('cardio requires positive minutes and rejects malformed or negative optiona
 function app() {
   const nodes = new Map(), writes = new Map(), storage = new Map();
   function node(selector) {
-    if (!nodes.has(selector)) nodes.set(selector, { hidden: true, value: '', innerHTML: '', textContent: '', style: {}, listeners: {},
+    if (!nodes.has(selector)) nodes.set(selector, { hidden: true, value: '', checked: false, isConnected: true, innerHTML: '', textContent: '', style: {}, listeners: {},
       addEventListener(type, cb) { this.listeners[type] = cb; }, querySelectorAll() { return []; }, querySelector() { return null; },
-      setAttribute() {}, focus() {}, contains() { return false; } });
+      setAttribute() {}, removeAttribute() {}, select() {}, focus() {}, contains() { return false; } });
     return nodes.get(selector);
   }
-  const context = { console, SessionModel: Model, structuredClone, crypto: require('node:crypto').webcrypto,
+  const context = { console, SessionModel: Model, ShareReport: require('../share-report.js'), structuredClone, crypto: require('node:crypto').webcrypto,
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
     localStorage: { getItem: k => storage.get(k) || null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },
     navigator: {}, location: { protocol: 'http:' },
@@ -78,11 +78,11 @@ function app() {
   };
   const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
   const source = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)][0][1];
-  const hooks = 'globalThis.app = { S, startSession, viewSession, viewBody, viewProgEx, viewHistList, summaryHTML, sessTotals, finishSession, flushSave, saveEntryOrder, removeSessionExercise, buildWorkbook, importBackup, backupText };';
+  const hooks = 'globalThis.app = { S, startSession, viewSession, viewBody, viewProgEx, viewHistList, summaryHTML, sessTotals, finishSession, flushSave, saveEntryOrder, removeSessionExercise, buildWorkbook, importBackup, backupText, openShare };';
   vm.runInNewContext(source.replace('\nboot();', '\n' + hooks), context, { filename: 'index.html' });
   const api = context.app;
   api.S.loaded = { routines: true, sessions: true }; api.S.dbEmpty = false;
-  api.S.db = { doc: key => ({ set: async v => writes.set(key, copy(v)), get: async () => ({ exists: false }) }), exportAll: async () => Object.fromEntries(writes) };
+  api.S.db = { doc: key => ({ set: async v => writes.set(key, copy(v)), get: async () => ({ exists: false }) }), exportAll: async () => Object.fromEntries(writes), collection: () => ({ get: async () => ({ docs: api.S.sessions.map(s => ({ id: s.id, data: () => copy(s) })) }) }) };
   api.S.routines = { days: [{ id: 'day', name: 'Torso', kind: 'pesas', withCardio: true, exercises: [entry('a'), entry('b')].map(e => ({ id: e.exId, name: e.name, sets: 1, repMin: 8, repMax: 12 })) }] };
   return { ...api, node, writes, context };
 }
@@ -156,4 +156,50 @@ test('failed storage write keeps the active workout and cardio available to retr
   await a.finishSession();
   assert.equal(a.S.active.status, 'active'); assert.equal(a.S.active.cardioBlocks[0].min, 15);
   assert.equal(a.S.active.entries.length, 2); assert.equal(a.S.sessions.length, 0);
+});
+
+test('share dialog builds an encoded WhatsApp draft and copies the selected report without writes', async () => {
+  const a = app(), saved = session(); saved.status = 'done'; saved.notes = 'PRIVATE NOTES';
+  saved.entries[0].sets[0] = { w: 20, r: 10, done: true };
+  a.S.sessions = [saved]; a.S.body = [{ date: saved.date, armLeft: 32, armRight: 33 }];
+  a.node('#share-period').value = 'all';
+  let clipboard = '';
+  a.context.navigator.clipboard = { writeText: async text => { clipboard = text; } };
+  await a.openShare();
+  assert.match(a.node('#share-whatsapp').href, /^https:\/\/wa\.me\/\?text=/);
+  assert.equal(decodeURIComponent(a.node('#share-whatsapp').href.split('?text=')[1]), a.node('#share-preview').value);
+  assert.equal(a.node('#share-preview').value.includes('PRIVATE NOTES'), false);
+  assert.equal(a.node('#share-preview').value.includes('Brazo izquierdo'), false);
+  a.node('#share-body').checked = a.node('#share-notes').checked = true;
+  a.node('#share-ai').onclick();
+  assert.match(a.node('#share-preview').value, /Brazo izquierdo: 32 cm/);
+  assert.match(a.node('#share-preview').value, /PRIVATE NOTES/);
+  await a.node('#share-copy').onclick();
+  assert.equal(clipboard, a.node('#share-preview').value);
+  assert.equal(a.writes.size, 0);
+});
+
+test('share dialog rejects reversed date ranges and offers manual copy if clipboard is unavailable', async () => {
+  const a = app(), saved = session(); saved.status = 'done'; saved.entries[0].sets[0] = { w: 20, r: 10, done: true };
+  a.S.sessions = [saved]; a.node('#share-period').value = 'all';
+  await a.openShare(); await a.node('#share-copy').onclick();
+  assert.match(a.node('#toast').textContent, /texto resaltado/);
+  a.node('#share-period').value = 'custom'; a.node('#share-from').value = '2026-10-31'; a.node('#share-to').value = '2026-10-01';
+  a.node('#share-period').listeners.change();
+  assert.equal(a.node('#share-copy').disabled, true);
+  assert.match(a.node('#share-count').textContent, /fechas válidas/);
+});
+
+test('all-history sharing reads beyond the app list limit and handles cancelled native shares', async () => {
+  const a = app(), saved = session(); saved.status = 'done'; saved.entries[0].sets[0] = { w: 20, r: 10, done: true };
+  a.S.sessions = [];
+  a.S.db.collection = () => ({ get: async () => ({ docs: Array.from({ length: 1001 }, (_, i) => ({ id: 's' + i, data: () => ({ ...copy(saved), id: 's' + i }) })) }) });
+  a.node('#share-period').value = 'all';
+  let calls = 0;
+  a.context.navigator.share = async payload => { calls++; assert.ok(payload.text); throw Object.assign(new Error('cancel'), { name: 'AbortError' }); };
+  await a.openShare();
+  assert.match(a.node('#share-count').textContent, /^1001 sesiones/);
+  await a.node('#share-native').onclick();
+  assert.equal(calls, 1); assert.equal(a.node('#share-native').disabled, false);
+  assert.equal(a.node('#toast').textContent, '');
 });

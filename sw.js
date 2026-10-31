@@ -1,10 +1,10 @@
 /* Service worker: guarda la app y la librería XLSX para usarla sin internet.
    Sube VERSION cuando cambies algún archivo para que los teléfonos se actualicen. */
-const VERSION = 'v8';
+const VERSION = 'v9';
 const APP = 'bitacora-app-' + VERSION;
 const RUNTIME = 'bitacora-runtime';
 const XLSX = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-const FILES = ['./', 'index.html', 'localdb.js', 'catalog.js', 'session-model.js', 'exercises-db.json', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png'];
+const FILES = ['./', 'index.html', 'privacidad.html', 'localdb.js', 'catalog.js', 'session-model.js', 'share-report.js', 'exercises-db.json', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil((async () => {

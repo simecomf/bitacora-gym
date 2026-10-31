@@ -79,6 +79,9 @@ h3{font-size:20px;font-weight:600}
 .btn.danger{color:var(--danger)}
 .btn.sm{min-height:36px;padding:6px 10px;font-size:14px}
 .btn:disabled{opacity:.45;cursor:not-allowed}
+a.btn{text-decoration:none;text-align:center}
+a.btn[aria-disabled="true"]{pointer-events:none;opacity:.45}
+.share-preview{resize:vertical;max-height:300px;line-height:1.45;white-space:pre-wrap}
 
 .ex-list{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 .ex-list li{display:flex;justify-content:space-between;gap:10px;font-size:15px;border-bottom:1px dashed var(--line);padding-bottom:6px}
@@ -306,6 +309,7 @@ details.pk summary,details.howto summary{cursor:pointer;font-weight:600;color:va
 <script src="localdb.js"></script>
 <script src="catalog.js"></script>
 <script src="session-model.js"></script>
+<script src="share-report.js"></script>
 <script>
 (() => {
 const $ = (s, r = document) => r.querySelector(s);
@@ -1166,7 +1170,7 @@ function summaryHTML(s) {
 }
 function showSummary(s, eyebrow) {
   modal(`<div><span class="eyebrow">${esc(eyebrow || fmtDate(s.date, { weekday: 'long', day: 'numeric', month: 'long' }))}</span><h2>${esc(s.dayName)}</h2></div>${summaryHTML(s)}
-    <div class="row"><button class="btn primary" id="sumOk">Listo</button></div>`);
+    <div class="row"><button class="btn" data-act="shareresults" data-id="${esc(s.id)}">Compartir resultados</button><button class="btn primary" id="sumOk">Listo</button></div>`);
   $('#sumOk').onclick = closeModal;
 }
 /* calendar: tap a day to see everything done that day */
@@ -1352,7 +1356,7 @@ function viewRec() {
 function viewHist() {
   const v = S.histView;
   const seg = `<div class="seg full" role="group" aria-label="Vista de historial">${[['list', 'Sesiones'], ['week', 'Semana'], ['month', 'Mes']].map(([k, l]) => `<button data-act="hview" data-v="${k}" aria-pressed="${v === k}">${l}</button>`).join('')}</div>`;
-  return `<div class="spread"><h1>Historial</h1>${exportBtn('sm')}</div>${seg}${v === 'list' ? viewHistList() : viewRecap(v)}`;
+  return `<div class="spread" style="flex-wrap:wrap"><h1>Historial</h1><div class="row"><button class="btn sm" data-act="shareresults">Compartir resultados</button>${exportBtn('sm')}</div></div>${seg}${v === 'list' ? viewHistList() : viewRecap(v)}`;
 }
 function aggregate(arr) { return arr.reduce((a, s) => { const t = sessTotals(s); a.n++; a.min += t.min; a.sets += t.n; a.vol += t.vol; a.prs += t.prs; a.cardio += t.cardio; return a; }, { n: 0, min: 0, sets: 0, vol: 0, prs: 0, cardio: 0 }); }
 function calendar(from) {
@@ -1425,6 +1429,7 @@ function viewRut() {
     <div class="card"><h2>Barra y discos</h2><p class="small muted" style="margin:0">Para la calculadora de discos y el calentamiento automático. La barra de cada ejercicio se elige en la calculadora, durante la sesión.</p>
     ${['kg', 'lb'].map(u => `<div class="stack" style="gap:6px"><span>Barra por defecto (${u})</span><div class="chips">${(u === 'kg' ? [20, 15, 10] : [45, 35, 25]).map(b => `<button class="chip" data-act="dbar" data-u="${u}" data-b="${b}" aria-pressed="${barFor('', u) === b}" ${can ? '' : 'disabled'}>${b} ${u}</button>`).join('')}</div>
       <span>Discos que tienes (${u})</span><div class="chips" style="flex-wrap:wrap">${PLATES_ALL[u].map(pl => `<button class="chip" data-act="ptog" data-u="${u}" data-p="${pl}" aria-pressed="${platesFor(u).includes(pl)}" ${can ? '' : 'disabled'}>${fmtN(pl, 2)}</button>`).join('')}</div></div>`).join('')}</div>
+    <div class="card"><h2>Compartir resultados</h2><p class="small muted" style="margin:0">Prepara un resumen para WhatsApp o un informe completo para analizar en ChatGPT u otra IA. Elige el período y si quieres incluir medidas corporales o notas.</p><button class="btn block" data-act="shareresults">Compartir resultados</button></div>
     ${driveCard()}<div class="card"><h2>Respaldo</h2><p class="small muted" style="margin:0">Tus datos viven solo en este dispositivo. Exporta el respaldo JSON al menos una vez por semana y guárdalo en tu Drive o tu computadora: es el único archivo que se puede volver a importar (en este u otro teléfono).</p>
     ${st.lastBackup ? `<p class="small" style="margin:0">Último respaldo JSON: <b>${fmtDate(st.lastBackup, { weekday: 'long', day: 'numeric', month: 'long' })}</b></p>` : ''}
     <button class="btn primary block" data-act="exportjson">${ICON.dl}Exportar respaldo (JSON)</button>
@@ -1660,6 +1665,88 @@ function warmImages() {
   const ids = [...new Set(allExercises().map(e => exImg(e.id)).filter(x => x && x.db).map(x => x.db))];
   const key = ids.join(','); if (!ids.length || key === warmed || !navigator.onLine) return; warmed = key;
   setTimeout(() => { for (const id of ids) for (const n of [0, 1]) fetch(imgUrl(id, n)).catch(() => {}); }, 3000);
+}
+
+/* ---------- SHARE RESULTS ---------- */
+async function openShare(sessionId) {
+  modal('<div><h2>Compartir resultados</h2><p id="share-loading" class="small muted">Preparando los registros guardados…</p></div><button class="btn ghost" id="share-cancel">Cerrar</button>');
+  $('#share-cancel').onclick = closeModal;
+  const loading = $('#share-loading');
+  let sourceSessions;
+  try {
+    const snapshot = await S.db.collection('sessions').get();
+    sourceSessions = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch (e) {
+    if (loading.isConnected) { loading.textContent = 'No se pudieron leer los resultados. Cierra este cuadro e inténtalo de nuevo.'; }
+    return;
+  }
+  if (!loading.isConnected) return;
+  const saved = sourceSessions.filter(s => s.status === 'done').sort((a, b) => a.startedAt - b.startedAt);
+  const selected = sessionId ? saved.find(s => s.id === sessionId) : null;
+  const last = saved[saved.length - 1];
+  const end = today(), start = isoOf(addDays(dateOf(end), -29));
+  let report = null, preview = 'summary';
+  modal(`<div><span class="eyebrow">Resultados guardados</span><h2>Compartir resultados</h2></div>
+    <label class="field">Período<select id="share-period">${selected ? '<option value="session" selected>Esta sesión</option>' : last ? '<option value="last">Última sesión guardada</option>' : ''}<option value="7">Últimos 7 días</option><option value="30" ${selected ? '' : 'selected'}>Últimos 30 días</option><option value="90">Últimos 90 días</option><option value="all">Todo el historial guardado</option><option value="custom">Elegir fechas</option></select></label>
+    <div class="grid2" id="share-dates" hidden><label class="field">Desde<input id="share-from" type="date" value="${start}" max="${end}"></label><label class="field">Hasta<input id="share-to" type="date" value="${end}" max="${end}"></label></div>
+    <div class="stack" style="gap:8px"><label class="chk-line"><input type="checkbox" id="share-body"> Incluir medidas corporales</label><label class="chk-line"><input type="checkbox" id="share-notes"> Incluir notas de las sesiones</label></div>
+    <p id="share-count" class="small muted" role="status" style="margin:0"></p>
+    <div class="seg full" role="group" aria-label="Formato del informe"><button type="button" id="share-summary" aria-pressed="true">Resumen</button><button type="button" id="share-ai" aria-pressed="false">Informe para IA</button></div>
+    <label class="field"><span id="share-label">Vista previa del resumen</span><textarea id="share-preview" class="share-preview" readonly rows="7" spellcheck="false"></textarea></label>
+    <div id="share-summary-actions" class="stack"><a class="btn primary block" id="share-whatsapp" target="_blank" rel="noopener noreferrer">Abrir en WhatsApp</a><p class="small muted" style="margin:0">El resumen es breve; todas las series y medidas seleccionadas están en el informe para IA. En WhatsApp eliges el contacto y confirmas el envío.</p></div>
+    <div id="share-ai-actions" class="stack" hidden><div class="grid2"><button class="btn" id="share-txt">Descargar TXT</button><button class="btn" id="share-json">Descargar JSON</button></div><a class="btn primary block" href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer">Abrir ChatGPT</a><p class="small muted" style="margin:0">Copia el informe o descarga el TXT. En ChatGPT u otra IA, pégalo o adjunta el archivo y envía tu mensaje. El informe incluye una petición de análisis.</p></div>
+    <div class="row" style="justify-content:stretch"><button class="btn" id="share-copy" style="flex:1">Copiar resumen</button><button class="btn" id="share-native" hidden>Compartir…</button></div>
+    <p class="small muted" style="margin:0">Solo se preparan los datos que ves aquí. Tú eliges dónde enviarlos. Las fotos y los datos de conexión quedan fuera.</p>
+    <button class="btn ghost block" id="share-close">Cerrar</button>`);
+  const update = () => {
+    const scope = $('#share-period').value;
+    const one = scope === 'session' ? selected : scope === 'last' ? last : null;
+    let from = null, to = end;
+    if (one) from = to = one.date;
+    else if (scope === 'custom') { from = $('#share-from').value; to = $('#share-to').value; }
+    else if (scope !== 'all') from = isoOf(addDays(dateOf(end), -(+scope - 1)));
+    $('#share-dates').hidden = scope !== 'custom';
+    const valid = (scope !== 'custom' || (from && to)) && (!from || from <= to) && to <= end;
+    report = valid ? ShareReport.build({ sessions: sourceSessions, body: S.body, bodyFields: BODY_FIELDS, sessionId: one && one.id, period: { from, to, label: one ? 'Sesión del ' + one.date : (from ? from + ' al ' + to : 'Todo el historial hasta ' + to) }, includeBody: $('#share-body').checked, includeNotes: $('#share-notes').checked, generatedAt: new Date().toISOString() }) : null;
+    const ready = !!(report && report.hasData);
+    $('#share-count').textContent = !valid ? 'Elige fechas válidas, hasta hoy, con inicio anterior o igual al final.' : !ready ? 'No hay sesiones terminadas en este período. Cambia las fechas o incluye tus medidas corporales.' : `${report.data.totals.sessions} ${report.data.totals.sessions === 1 ? 'sesión' : 'sesiones'} · ${(report.data.bodyMeasurements || []).length} registros de medidas · solo datos guardados`;
+    $('#share-label').textContent = preview === 'summary' ? 'Vista previa del resumen' : 'Vista previa del informe para IA';
+    $('#share-preview').value = report ? (preview === 'summary' ? report.whatsapp : report.text) : '';
+    $('#share-summary-actions').hidden = preview !== 'summary'; $('#share-ai-actions').hidden = preview !== 'ai';
+    $('#share-summary').setAttribute('aria-pressed', String(preview === 'summary')); $('#share-ai').setAttribute('aria-pressed', String(preview === 'ai'));
+    $('#share-copy').textContent = preview === 'summary' ? 'Copiar resumen' : 'Copiar informe';
+    for (const id of ['share-copy', 'share-txt', 'share-json', 'share-native']) $('#' + id).disabled = !ready;
+    const wa = $('#share-whatsapp'); wa.setAttribute('aria-disabled', String(!ready)); wa.tabIndex = ready ? 0 : -1;
+    if (ready) wa.href = 'https://wa.me/?text=' + encodeURIComponent(report.whatsapp); else wa.removeAttribute('href');
+    $('#share-native').hidden = typeof navigator.share !== 'function';
+  };
+  for (const id of ['share-period', 'share-from', 'share-to', 'share-body', 'share-notes']) $('#' + id).addEventListener('change', update);
+  $('#share-summary').onclick = () => { preview = 'summary'; update(); };
+  $('#share-ai').onclick = () => { preview = 'ai'; update(); };
+  $('#share-copy').onclick = async () => {
+    if (!report || !report.hasData) return;
+    const value = $('#share-preview').value;
+    try { if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') throw new Error('clipboard'); await navigator.clipboard.writeText(value); toast('Copiado. Pégalo en la app que elijas.'); }
+    catch (e) { $('#share-preview').focus(); $('#share-preview').select(); toast('Selecciona Copiar en el texto resaltado.'); }
+  };
+  const filename = extension => 'bitacora-informe-' + (report.data.period.from || 'historial') + '-' + report.data.period.to + '.' + extension;
+  $('#share-txt').onclick = () => { if (report && report.hasData) { saveFile(filename('txt'), report.text, 'text/plain;charset=utf-8'); toast('Informe TXT descargado'); } };
+  $('#share-json').onclick = () => { if (report && report.hasData) { saveFile(filename('json'), JSON.stringify(report.data, null, 2), 'application/json'); toast('Informe JSON descargado; sirve para analizar, no para restaurar.'); } };
+  $('#share-native').onclick = async () => {
+    if (!report || !report.hasData || typeof navigator.share !== 'function') return;
+    const button = $('#share-native'); button.disabled = true;
+    try {
+      let payload = { title: 'Bitácora de Gym · Resultados', text: preview === 'summary' ? report.whatsapp : report.text };
+      if (preview === 'ai' && typeof File === 'function' && typeof navigator.canShare === 'function') {
+        const file = new File([report.text], filename('txt'), { type: 'text/plain' });
+        if (navigator.canShare({ files: [file] })) payload = { title: payload.title, files: [file] };
+      }
+      await navigator.share(payload);
+    } catch (e) { if (!e || e.name !== 'AbortError') toast('No se pudo abrir Compartir. Puedes copiar el texto o descargar el TXT.'); }
+    finally { button.disabled = false; }
+  };
+  $('#share-close').onclick = closeModal;
+  update();
 }
 
 /* ---------- EXPORT ---------- */
@@ -1931,6 +2018,7 @@ $('#view').addEventListener('click', async e => {
     if (await write('config/routines', nr)) { S.routines = nr; toast(en.name + ' ahora se registra en ' + nu); }
   }
   else if (act === 'export') exportExcel();
+  else if (act === 'shareresults') openShare(b.dataset.id);
   else if (act === 'exportjson') exportJSON();
   else if (act === 'driveconnect') driveBackupNow(true);
   else if (act === 'drivenow') driveBackupNow(false);
@@ -2037,6 +2125,7 @@ $('#view').addEventListener('click', async e => {
   }
 });
 $('#modalIn').addEventListener('click', async e => {
+  const share = e.target.closest('[data-act="shareresults"]'); if (share) { openShare(share.dataset.id); return; }
   const b = e.target.closest('[data-act="tpl"]'); if (b) useTemplate(+b.dataset.i);
   const d = e.target.closest('#sumDrive'); if (d) { d.disabled = true; d.textContent = 'Respaldando…'; try { await driveToken(false); await driveUpload(); d.outerHTML = '<p class="small" style="margin:0;color:var(--ok)">✓ Respaldo guardado en Google Drive</p>'; } catch (er) { d.disabled = false; d.textContent = 'Respaldar en Google Drive'; toast(er && er.message === 'gis' ? 'Preparando la conexión con Google… vuelve a tocar.' : 'No se pudo respaldar en Drive.'); } }
 });
